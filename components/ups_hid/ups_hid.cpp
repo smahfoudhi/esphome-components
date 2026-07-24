@@ -260,14 +260,65 @@ bool UpsHidComponent::detect_protocol() {
   }
   
   uint16_t vendor_id = transport_->get_vendor_id();
+
+  auto try_direct_protocol = [&](std::unique_ptr<UpsProtocolBase> protocol, const char *label) -> bool {
+    if (!protocol) {
+      return false;
+    }
+
+    if (!protocol->detect()) {
+      ESP_LOGW(TAG, "Direct protocol detection failed for %s", label);
+      return false;
+    }
+
+    if (!protocol->initialize()) {
+      ESP_LOGW(TAG, "Direct protocol initialization failed for %s", label);
+      return false;
+    }
+
+    active_protocol_ = std::move(protocol);
+    ESP_LOGI(TAG, "Protocol selected via direct path: %s", active_protocol_->get_protocol_name().c_str());
+    return true;
+  };
   
   if (protocol_selection_ == "auto") {
-    // Automatic protocol detection based on vendor ID
+    // Automatic protocol detection with vendor-priority direct path first.
+    if (vendor_id == 0x051D) {
+      ESP_LOGD(TAG, "Auto-detecting APC protocol directly for vendor 0x%04X", vendor_id);
+      if (!try_direct_protocol(std::make_unique<ApcHidProtocol>(this), "APC HID Protocol")) {
+        ESP_LOGW(TAG, "Direct APC detection failed, falling back to protocol factory");
+      } else {
+        return true;
+      }
+    } else if (vendor_id == 0x0764) {
+      ESP_LOGD(TAG, "Auto-detecting CyberPower protocol directly for vendor 0x%04X", vendor_id);
+      if (!try_direct_protocol(std::make_unique<CyberPowerProtocol>(this), "CyberPower HID Protocol")) {
+        ESP_LOGW(TAG, "Direct CyberPower detection failed, falling back to protocol factory");
+      } else {
+        return true;
+      }
+    }
+
     ESP_LOGD(TAG, "Auto-detecting protocol for vendor 0x%04X using factory", vendor_id);
     active_protocol_ = ProtocolFactory::create_for_vendor(vendor_id, this);
   } else {
-    // Manual protocol selection via factory
     ESP_LOGD(TAG, "Using manually selected protocol: %s", protocol_selection_.c_str());
+
+    if (protocol_selection_ == "apc") {
+      if (try_direct_protocol(std::make_unique<ApcHidProtocol>(this), "APC HID Protocol")) {
+        return true;
+      }
+    } else if (protocol_selection_ == "cyberpower") {
+      if (try_direct_protocol(std::make_unique<CyberPowerProtocol>(this), "CyberPower HID Protocol")) {
+        return true;
+      }
+    } else if (protocol_selection_ == "generic") {
+      if (try_direct_protocol(std::make_unique<GenericHidProtocol>(this), "Generic HID Protocol")) {
+        return true;
+      }
+    }
+
+    // Fallback for unknown/manual names.
     active_protocol_ = ProtocolFactory::create_by_name(protocol_selection_, this);
   }
   
@@ -279,7 +330,7 @@ bool UpsHidComponent::detect_protocol() {
   
   ESP_LOGI(TAG, "Successfully created protocol: %s", active_protocol_->get_protocol_name().c_str());
   
-  // Initialize the protocol (detection already done by factory)
+  // Initialize the protocol (factory create_for_vendor already performs detect).
   if (!active_protocol_->initialize()) {
     ESP_LOGE(TAG, "Protocol initialization failed");
     active_protocol_.reset();
