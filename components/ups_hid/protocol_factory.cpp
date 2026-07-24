@@ -23,10 +23,12 @@ ProtocolFactory::get_fallback_registry() {
 
 void ProtocolFactory::ensure_initialized() {
     // Registries are initialized on first access due to static storage
-    // This function exists for explicit initialization if needed
+    // NOTE: Do NOT log here. This is reachable from global (static) constructors
+    // via the self-registration macros, which run before the ESPHome logger
+    // exists. Logging at that point dereferences a null logger and crashes
+    // (LoadProhibited) at boot.
     static bool initialized = false;
     if (!initialized) {
-        ESP_LOGD(FACTORY_TAG, "Protocol factory registries initialized");
         initialized = true;
     }
 }
@@ -43,9 +45,8 @@ void ProtocolFactory::register_protocol_for_vendor(uint16_t vendor_id,
               [](const ProtocolInfo& a, const ProtocolInfo& b) {
                   return a.priority > b.priority;
               });
-    
-    ESP_LOGI(FACTORY_TAG, "Registered protocol '%s' for vendor 0x%04X (priority %d)", 
-             info.name.c_str(), vendor_id, info.priority);
+
+    // NOTE: No logging here - callable from static constructors before logger init.
 }
 
 void ProtocolFactory::register_fallback_protocol(const ProtocolInfo& info) {
@@ -59,9 +60,8 @@ void ProtocolFactory::register_fallback_protocol(const ProtocolInfo& info) {
               [](const ProtocolInfo& a, const ProtocolInfo& b) {
                   return a.priority > b.priority;
               });
-    
-    ESP_LOGI(FACTORY_TAG, "Registered fallback protocol '%s' (priority %d)", 
-             info.name.c_str(), info.priority);
+
+    // NOTE: No logging here - callable from static constructors before logger init.
 }
 
 std::unique_ptr<UpsProtocolBase> 
