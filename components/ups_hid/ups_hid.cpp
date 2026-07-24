@@ -284,12 +284,19 @@ bool UpsHidComponent::detect_protocol() {
   if (protocol_selection_ == "auto") {
     // Automatic protocol detection with vendor-priority direct path first.
     if (vendor_id == 0x051D) {
-      ESP_LOGD(TAG, "Auto-detecting APC protocol directly for vendor 0x%04X", vendor_id);
-      if (!try_direct_protocol(std::make_unique<ApcHidProtocol>(this), "APC HID Protocol")) {
-        ESP_LOGW(TAG, "Direct APC detection failed, falling back to protocol factory");
-      } else {
+      ESP_LOGI(TAG, "Forcing APC protocol for vendor 0x%04X (INPUT-ONLY, skip detect)", vendor_id);
+      auto apc_protocol = std::make_unique<ApcHidProtocol>(this);
+      if (apc_protocol->initialize()) {
+        active_protocol_ = std::move(apc_protocol);
+        ESP_LOGI(TAG, "Protocol forced via direct path: %s",
+                 active_protocol_->get_protocol_name().c_str());
+        {
+          std::lock_guard<std::mutex> lock(data_mutex_);
+          ups_data_.device.detected_protocol = active_protocol_->get_protocol_type();
+        }
         return true;
       }
+      ESP_LOGW(TAG, "APC initialize failed, falling back to protocol factory");
     } else if (vendor_id == 0x0764) {
       ESP_LOGD(TAG, "Auto-detecting CyberPower protocol directly for vendor 0x%04X", vendor_id);
       if (!try_direct_protocol(std::make_unique<CyberPowerProtocol>(this), "CyberPower HID Protocol")) {
