@@ -437,8 +437,8 @@ void UpsHidComponent::update_sensors() {
       value = ups_data_.config.beeper_status;
     } else if (type == text_sensor_type::INPUT_SENSITIVITY && !ups_data_.config.input_sensitivity.empty()) {
       value = ups_data_.config.input_sensitivity;
-    } else if (type == text_sensor_type::STATUS && !ups_data_.power.status.empty()) {
-      value = ups_data_.power.status;
+    } else if (type == text_sensor_type::STATUS) {
+      value = ups_data_.power.status.empty() ? status::UNKNOWN : ups_data_.power.status;
     } else if (type == text_sensor_type::PROTOCOL) {
       value = get_protocol_name();
     } else if (type == text_sensor_type::BATTERY_MFR_DATE && !ups_data_.battery.mfr_date.empty()) {
@@ -451,7 +451,11 @@ void UpsHidComponent::update_sensors() {
       value = ups_data_.device.firmware_aux;
     }
     
-    if (!value.empty()) {
+    bool must_publish = (type == text_sensor_type::STATUS || type == text_sensor_type::STATUS_CODE);
+    if (!value.empty() || must_publish) {
+      if (value.empty()) {
+        value = status::UNKNOWN;
+      }
       sensor->publish_state(value);
     }
   }
@@ -815,8 +819,17 @@ std::string UpsHidComponent::get_nut_status_code() const {
     return value.find(needle) != std::string::npos;
   };
 
-  bool online = data.power.input_voltage_valid();
-  bool on_battery = !online;
+  bool has_power_hint = data.power.input_voltage_valid() ||
+                        !std::isnan(data.power.input_voltage) ||
+                        !data.power.status.empty();
+  bool has_battery_hint = data.battery.is_valid() || !data.battery.status.empty();
+
+  if (!has_power_hint && !has_battery_hint) {
+    return "UNKNOWN";
+  }
+
+  bool online = data.power.input_voltage_valid() || contains_text(data.power.status, status::ONLINE);
+  bool on_battery = (!online && has_power_hint) || contains_text(data.power.status, status::ON_BATTERY);
   bool has_fault = data.power.is_input_out_of_range() ||
                    (!data.power.is_valid() && !data.battery.is_valid());
   bool charging = (online && data.battery.is_valid() && !std::isnan(data.battery.level) && data.battery.level < 100.0f) ||
