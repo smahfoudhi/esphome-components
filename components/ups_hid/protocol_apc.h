@@ -46,6 +46,15 @@ public:
   bool set_reboot_delay(int seconds) override;
 
 private:
+  // Cache static USB descriptor information to avoid expensive repeated descriptor reads.
+  bool static_info_cached_{false};
+  uint32_t last_static_info_read_ms_{0};
+  std::string cached_manufacturer_;
+  std::string cached_model_;
+  std::string cached_serial_number_;
+  std::string cached_firmware_version_;
+  std::string cached_firmware_aux_;
+  static constexpr uint32_t STATIC_INFO_REFRESH_MS = 300000;  // 5 minutes
 
   bool init_hid_communication();
   bool read_hid_report(uint8_t report_id, HidReport &report);

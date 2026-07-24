@@ -228,17 +228,32 @@ void NutServerComponent::handle_client(NutClient &client) {
   
   if (bytes_received > 0) {
     buffer[bytes_received] = '\0';
-    
-    // Remove trailing newline
-    char *newline = strchr(buffer, '\n');
-    if (newline) *newline = '\0';
-    newline = strchr(buffer, '\r');
-    if (newline) *newline = '\0';
-    
     client.last_activity = millis();
-    
-    ESP_LOGV(TAG, "Received command: %s", buffer);
-    process_command(client, std::string(buffer));
+
+    // A single recv() can contain multiple NUT commands separated by CR/LF.
+    std::string incoming(buffer);
+    size_t start = 0;
+    while (start < incoming.size() && client.is_active()) {
+      size_t end = incoming.find_first_of("\r\n", start);
+      std::string line = (end == std::string::npos)
+                             ? incoming.substr(start)
+                             : incoming.substr(start, end - start);
+
+      if (!line.empty()) {
+        ESP_LOGV(TAG, "Received command: %s", line.c_str());
+        process_command(client, line);
+      }
+
+      if (end == std::string::npos) {
+        break;
+      }
+
+      start = end + 1;
+      while (start < incoming.size() &&
+             (incoming[start] == '\r' || incoming[start] == '\n')) {
+        start++;
+      }
+    }
     
   } else if (bytes_received == 0) {
     // Client disconnected
@@ -728,6 +743,7 @@ bool NutServerComponent::send_response(NutClient &client, const std::string &res
     } else {
       ESP_LOGW(TAG, "Send error: %d", errno);
     }
+    disconnect_client(client);
     return false;
   }
   return bytes_sent == (int)response.length();

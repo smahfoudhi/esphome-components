@@ -236,44 +236,87 @@ bool ApcHidProtocol::read_data(UpsData &data) {
   // This ensures the device is ready and responsive before attempting descriptor access
   if (success) {
     ESP_LOGD(APC_HID_TAG, "APC HID data read successful, now reading device info...");
-    
-    // Read manufacturer from USB Manufacturer string descriptor (index 3)
-    // NUT shows: UPS.PowerSummary.iManufacturer, Value: 3 → Manufacturer: "APC"
-    std::string manufacturer_string;
-    esp_err_t mfr_ret = parent_->usb_get_string_descriptor(3, manufacturer_string);
-    
-    if (mfr_ret == ESP_OK && !manufacturer_string.empty()) {
-      data.device.manufacturer = manufacturer_string;
-      ESP_LOGI(APC_HID_TAG, "Successfully read manufacturer from USB descriptor: \"%s\"", data.device.manufacturer.c_str());
-    } else {
-      data.device.manufacturer.clear();  // Set to unset state instead of hardcoded fallback
-      ESP_LOGW(APC_HID_TAG, "Failed to read USB Manufacturer descriptor: %s, leaving unset", esp_err_to_name(mfr_ret));
-    }
-    
-    // Read model from USB Product string descriptor (index 1)
-    // NUT shows: Product: "Back-UPS ES 700G" but need to parse out firmware info
-    std::string product_string;
-    esp_err_t prod_ret = parent_->usb_get_string_descriptor(1, product_string);
-    
-    if (prod_ret == ESP_OK && !product_string.empty()) {
-      // Parse out just the model name, removing firmware info like "FW:841.H1 .D USB FW:H1"
-      std::string model_name = product_string;
-      size_t fw_pos = model_name.find(" FW:");
-      if (fw_pos != std::string::npos) {
-        model_name = model_name.substr(0, fw_pos);
+
+    uint32_t now = millis();
+    bool refresh_static_info = !static_info_cached_ ||
+                               (now - last_static_info_read_ms_) >= STATIC_INFO_REFRESH_MS;
+
+    if (refresh_static_info) {
+      // Correct USB descriptor mapping:
+      // - index 1 is manufacturer on this APC model
+      // - index 2 is typically product/model (if present)
+      std::string manufacturer_string;
+      esp_err_t mfr_ret = parent_->usb_get_string_descriptor(1, manufacturer_string);
+      if (mfr_ret == ESP_OK && !manufacturer_string.empty()) {
+        data.device.manufacturer = manufacturer_string;
+        cached_manufacturer_ = manufacturer_string;
+        ESP_LOGI(APC_HID_TAG, "Successfully read manufacturer from USB descriptor 1: \"%s\"",
+                 data.device.manufacturer.c_str());
+      } else {
+        data.device.manufacturer.clear();
+        cached_manufacturer_.clear();
+        ESP_LOGW(APC_HID_TAG, "USB manufacturer descriptor read failed: %s, clearing value (strict mode)",
+                 esp_err_to_name(mfr_ret));
       }
-      data.device.model = model_name;
-      ESP_LOGI(APC_HID_TAG, "Successfully read APC model from USB Product descriptor: \"%s\"", data.device.model.c_str());
-      
-      // Detect and set nominal power rating based on model name
-      detect_nominal_power_rating(data.device.model, data);
+
+      std::string model_string;
+      esp_err_t model_ret = parent_->usb_get_string_descriptor(2, model_string);
+      if (model_ret == ESP_OK && !model_string.empty() && model_string != data.device.manufacturer) {
+        data.device.model = model_string;
+        cached_model_ = model_string;
+        ESP_LOGI(APC_HID_TAG, "Successfully read APC model from USB descriptor 2: \"%s\"",
+                 data.device.model.c_str());
+      } else {
+        data.device.model.clear();
+        cached_model_.clear();
+        ESP_LOGW(APC_HID_TAG, "USB model descriptor unavailable/invalid, clearing value (strict mode)");
+      }
+
+      // Read additional mostly-static device information (serial/firmware).
+      read_device_information(data);
+
+      if (!data.device.serial_number.empty()) {
+        cached_serial_number_ = data.device.serial_number;
+      } else {
+        cached_serial_number_.clear();
+        ESP_LOGW(APC_HID_TAG, "USB serial number unavailable, clearing value (strict mode)");
+      }
+      if (!data.device.firmware_version.empty()) {
+        cached_firmware_version_ = data.device.firmware_version;
+      } else {
+        cached_firmware_version_.clear();
+        ESP_LOGW(APC_HID_TAG, "USB firmware version unavailable, clearing value (strict mode)");
+      }
+      if (!data.device.firmware_aux.empty()) {
+        cached_firmware_aux_ = data.device.firmware_aux;
+      } else {
+        cached_firmware_aux_.clear();
+      }
+
+      last_static_info_read_ms_ = now;
+      static_info_cached_ = true;
     } else {
-      data.device.model.clear();  // Set to unset state instead of hardcoded fallback
-      ESP_LOGW(APC_HID_TAG, "Failed to read USB Product descriptor: %s, leaving model unset", esp_err_to_name(prod_ret));
+      // Reuse cached static values on normal polling cycles to avoid descriptor timeouts.
+      data.device.manufacturer = cached_manufacturer_;
+      data.device.model = cached_model_;
+      data.device.serial_number = cached_serial_number_;
+      data.device.firmware_version = cached_firmware_version_;
+      data.device.firmware_aux = cached_firmware_aux_;
+
+      // Keep runtime settings fresh without touching USB string descriptors.
+      HidReport beeper_report;
+      if (read_hid_report(APC_REPORT_ID_AUDIBLE_ALARM, beeper_report)) {
+        parse_beeper_status_report(beeper_report, data);
+      }
+      HidReport sensitivity_report;
+      if (read_hid_report(APC_REPORT_ID_SENSITIVITY, sensitivity_report)) {
+        parse_input_sensitivity_report(sensitivity_report, data);
+      }
     }
-    
-    // Read additional device information (serial, firmware, etc.)
-    read_device_information(data);
+
+    if (!data.device.model.empty()) {
+      detect_nominal_power_rating(data.device.model, data);
+    }
     
     // Read missing dynamic values identified from NUT analysis
     read_missing_dynamic_values(data);
@@ -976,7 +1019,7 @@ void ApcHidProtocol::parse_firmware_version_report(const HidReport &report, UpsD
   
   // CRITICAL FIX: Skip manufacturer string descriptor (index 3) which contains "APC"
   // From the log we see that index 3 = "APC" (manufacturer), not firmware
-  if (first_byte > 0 && first_byte <= 15 && first_byte != 3) {
+  if (first_byte > 0 && first_byte <= 15 && first_byte != 1 && first_byte != 3) {
     ESP_LOGD(APC_HID_TAG, "Trying firmware as USB string descriptor index: %d", first_byte);
     
     std::string firmware_from_usb;
@@ -1006,8 +1049,8 @@ void ApcHidProtocol::parse_firmware_version_report(const HidReport &report, UpsD
       ESP_LOGD(APC_HID_TAG, "USB string descriptor %d read failed or contains manufacturer info: %s, trying other methods", 
                first_byte, esp_err_to_name(ret));
     }
-  } else if (first_byte == 3) {
-    ESP_LOGD(APC_HID_TAG, "Skipping manufacturer string descriptor index 3 for firmware");
+  } else if (first_byte == 1 || first_byte == 3) {
+    ESP_LOGD(APC_HID_TAG, "Skipping manufacturer/product descriptor index %d for firmware", first_byte);
   }
   
   // FALLBACK 1 (PRIORITY): Parse firmware from the USB Product string descriptor (index 1)
