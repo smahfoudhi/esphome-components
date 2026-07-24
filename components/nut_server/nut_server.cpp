@@ -286,10 +286,23 @@ void NutServerComponent::disconnect_client(NutClient &client) {
 void NutServerComponent::cleanup_inactive_clients() {
   uint32_t now = millis();
   std::lock_guard<std::mutex> lock(clients_mutex_);
+  static constexpr uint32_t CLIENT_CONNECT_GRACE_MS = 5000;
   
   for (auto &client : clients_) {
-    if (client.is_active() && (now - client.last_activity) > CLIENT_TIMEOUT_MS) {
-      ESP_LOGD(TAG, "Client timeout, disconnecting");
+    if (!client.is_active()) {
+      continue;
+    }
+
+    uint32_t idle_ms = (now >= client.last_activity) ? (now - client.last_activity) : 0;
+    uint32_t connected_ms = (now >= client.connect_time) ? (now - client.connect_time) : 0;
+
+    // Guard against premature disconnect right after connect/handshake.
+    if (connected_ms < CLIENT_CONNECT_GRACE_MS) {
+      continue;
+    }
+
+    if (idle_ms > CLIENT_TIMEOUT_MS) {
+      ESP_LOGD(TAG, "Client timeout, disconnecting (idle=%u ms, connected=%u ms)", idle_ms, connected_ms);
       disconnect_client(client);
     }
   }
@@ -746,6 +759,11 @@ bool NutServerComponent::send_response(NutClient &client, const std::string &res
     disconnect_client(client);
     return false;
   }
+
+  if (bytes_sent > 0) {
+    client.last_activity = millis();
+  }
+
   return bytes_sent == (int)response.length();
 #else
   return false;
