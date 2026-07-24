@@ -86,6 +86,18 @@ ups_hid:
 text_sensor:
   - platform: ups_hid
     ups_hid_id: ups_monitor
+    name: "UPS Status Code"
+    id: ups_status_code
+    type: status_code
+
+  - platform: ups_hid
+    ups_hid_id: ups_monitor
+    name: "UPS Status"
+    id: ups_status_text
+    type: status
+    
+  - platform: ups_hid
+    ups_hid_id: ups_monitor
     name: "Detected Protocol"
     id: ups_protocol
     type: protocol
