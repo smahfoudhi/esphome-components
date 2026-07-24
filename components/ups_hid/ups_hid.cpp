@@ -673,6 +673,7 @@ void UpsHidComponent::check_and_update_timers() {
   if (!active_protocol_) return;
   
   uint32_t now = millis();
+  static constexpr uint32_t IDLE_TIMER_POLL_INTERVAL_MS = 60000;
   
   // Check if we need to poll timers
   bool should_poll_timers = false;
@@ -683,8 +684,8 @@ void UpsHidComponent::check_and_update_timers() {
       should_poll_timers = true;
     }
   } else {
-    // Check if any timers might be active (less frequent check)
-    if (now - last_timer_poll_ >= get_update_interval()) {
+    // In normal mode, poll timer reports sparsely to avoid extra USB load.
+    if (now - last_timer_poll_ >= IDLE_TIMER_POLL_INTERVAL_MS) {
       should_poll_timers = true;
     }
   }

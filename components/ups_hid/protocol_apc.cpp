@@ -1332,11 +1332,8 @@ void ApcHidProtocol::read_missing_dynamic_values(UpsData &data) {
     parse_battery_voltage_actual_report(battery_voltage_report, data);
   }
   
-  // 2. Input voltage nominal (Report APC_REPORT_ID_INPUT_VOLTAGE_NOMINAL)
-  HidReport input_voltage_nominal_report;
-  if (read_hid_report(APC_REPORT_ID_INPUT_VOLTAGE_NOMINAL, input_voltage_nominal_report)) {
-    parse_input_voltage_nominal_report(input_voltage_nominal_report, data);
-  }
+  // 2. Skip input voltage nominal (0x30) on BX models.
+  // This report is frequently too short and mostly static.
   
   // 3. Input transfer limits (Reports APC_REPORT_ID_INPUT_TRANSFER_LOW, APC_REPORT_ID_INPUT_TRANSFER_HIGH)
   HidReport input_transfer_low_report;
@@ -1355,28 +1352,16 @@ void ApcHidProtocol::read_missing_dynamic_values(UpsData &data) {
     parse_battery_runtime_low_report(battery_runtime_low_report, data);
   }
   
-  // 5. Manufacturing dates (Reports APC_REPORT_ID_MFR_DATE_UPS, APC_REPORT_ID_MFR_DATE_BATTERY, 0x7b)
-  HidReport power_summary_mfr_date_report;
-  if (read_hid_report(APC_REPORT_ID_MFR_DATE_UPS, power_summary_mfr_date_report)) {
-    parse_manufacture_date_report(power_summary_mfr_date_report, data, false); // UPS mfr date
-  }
+  // 5. Manufacturing dates: keep battery date (0x20), skip UPS date (0x07)
+  // because 0x07 is frequently too short on this device.
   
   HidReport battery_mfr_date_report;
   if (read_hid_report(APC_REPORT_ID_MFR_DATE_BATTERY, battery_mfr_date_report)) {
     parse_manufacture_date_report(battery_mfr_date_report, data, true); // Battery mfr date
   }
   
-  // 6. UPS delay shutdown (Report APC_REPORT_ID_DELAY_SHUTDOWN)
-  HidReport ups_delay_shutdown_report;
-  if (read_hid_report(APC_REPORT_ID_DELAY_SHUTDOWN, ups_delay_shutdown_report)) {
-    parse_ups_delay_shutdown_report(ups_delay_shutdown_report, data);
-  }
-
-  // 7. UPS delay reboot (Report APC_REPORT_ID_DELAY_REBOOT)  
-  HidReport ups_delay_reboot_report;
-  if (read_hid_report(APC_REPORT_ID_DELAY_REBOOT, ups_delay_reboot_report)) {
-    parse_ups_delay_reboot_report(ups_delay_reboot_report, data);
-  }
+  // 6. Skip delay reports here (0x41/0x40).
+  // They are already handled by read_timer_data(), so reading them here duplicates USB traffic.
   
   // 7. Battery charge thresholds (Reports APC_REPORT_ID_CHARGE_WARNING, APC_REPORT_ID_CHARGE_LOW)
   HidReport battery_charge_warning_report;

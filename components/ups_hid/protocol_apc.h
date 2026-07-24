@@ -79,7 +79,7 @@ private:
   // Slow metrics are expensive to poll over HID; refresh less often and reuse snapshot in-between.
   bool slow_metrics_cached_{false};
   uint8_t slow_poll_cycle_{0};
-  static constexpr uint8_t SLOW_POLL_INTERVAL = 3;
+  static constexpr uint8_t SLOW_POLL_INTERVAL = 6;
   SlowMetricsCache slow_metrics_cache_;
 
   bool init_hid_communication();
