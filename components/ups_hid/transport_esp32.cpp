@@ -89,13 +89,6 @@ uint16_t Esp32UsbTransport::get_product_id() const {
 esp_err_t Esp32UsbTransport::hid_get_report(uint8_t report_type, uint8_t report_id, 
                                            uint8_t* data, size_t* data_len, 
                                            uint32_t timeout_ms) {
-    std::lock_guard<std::mutex> lock(device_mutex_);
-
-    if (!initialized_.load() || !connected_.load() || !device_.client_hdl || !device_.dev_hdl) {
-        ESP_LOGE(ESP32_USB_TAG, "HID GET_REPORT: device not ready");
-        return ESP_ERR_INVALID_STATE;
-    }
-
     if (!device_.dev_hdl) {
         ESP_LOGE(ESP32_USB_TAG, "HID GET_REPORT: No device handle");
         return ESP_ERR_INVALID_ARG;
@@ -197,13 +190,6 @@ esp_err_t Esp32UsbTransport::hid_get_report(uint8_t report_type, uint8_t report_
 esp_err_t Esp32UsbTransport::hid_set_report(uint8_t report_type, uint8_t report_id,
                                            const uint8_t* data, size_t data_len,
                                            uint32_t timeout_ms) {
-    std::lock_guard<std::mutex> lock(device_mutex_);
-
-    if (!initialized_.load() || !connected_.load() || !device_.client_hdl || !device_.dev_hdl) {
-        ESP_LOGE(ESP32_USB_TAG, "HID SET_REPORT: device not ready");
-        return ESP_ERR_INVALID_STATE;
-    }
-
     if (!device_.dev_hdl) {
         ESP_LOGE(ESP32_USB_TAG, "HID SET_REPORT: No device handle");
         return ESP_ERR_INVALID_ARG;
@@ -294,11 +280,9 @@ esp_err_t Esp32UsbTransport::hid_set_report(uint8_t report_type, uint8_t report_
 
 esp_err_t Esp32UsbTransport::get_string_descriptor(uint8_t string_index, 
                                                  std::string& result) {
-    std::lock_guard<std::mutex> lock(device_mutex_);
-
     result.clear();
     
-    if (!initialized_.load() || !connected_.load() || !device_.client_hdl || !device_.dev_hdl) {
+    if (!device_.dev_hdl) {
         set_last_error("USB device not ready");
         return ESP_ERR_INVALID_STATE;
     }
