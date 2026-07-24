@@ -191,14 +191,8 @@ bool ApcHidProtocol::read_data(UpsData &data) {
     ESP_LOGV(APC_HID_TAG, "Failed to read PresentStatus report");
   }
   
-  // 3. Read APCStatusFlag report (legacy status byte)
-  HidReport apc_status_report;
-  if (read_hid_report(APC_REPORT_ID_BATTERY, apc_status_report)) {
-    parse_apc_status_report(apc_status_report, data);
-    success = true;
-  } else {
-    ESP_LOGV(APC_HID_TAG, "Failed to read APCStatusFlag report");
-  }
+  // 3. Skip APCStatusFlag (report 0x06) on BX-class APC models.
+  // PresentStatus already provides stable online/on-battery/charging bits.
   
   // 4. Read input voltage report (NUT: UPS.Input.Voltage) 
   HidReport input_voltage_report;
@@ -218,14 +212,8 @@ bool ApcHidProtocol::read_data(UpsData &data) {
     ESP_LOGV(APC_HID_TAG, "Failed to read load report");
   }
   
-  // 6. Read output voltage report (legacy voltage reading)
-  HidReport voltage_report;
-  if (read_hid_report(APC_REPORT_ID_OUTPUT_VOLTAGE, voltage_report)) {
-    parse_voltage_report(voltage_report, data);
-    success = true;
-  } else {
-    ESP_LOGV(APC_HID_TAG, "Failed to read voltage report");
-  }
+  // 6. Skip legacy output voltage report (0x09) on this APC class.
+  // It commonly returns short payloads and adds unnecessary USB load.
   
   // Set frequency to NaN - not available in debug logs for this APC model
   // Try to read frequency from HID reports
