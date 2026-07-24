@@ -46,6 +46,26 @@ public:
   bool set_reboot_delay(int seconds) override;
 
 private:
+  struct SlowMetricsCache {
+    float battery_voltage_nominal{NAN};
+    float battery_voltage{NAN};
+    float battery_runtime_low{NAN};
+    float battery_charge_low{NAN};
+    float battery_charge_warning{NAN};
+    std::string battery_type;
+    std::string battery_mfr_date;
+    float input_voltage_nominal{NAN};
+    float input_transfer_low{NAN};
+    float input_transfer_high{NAN};
+    int16_t delay_shutdown{0};
+    int16_t delay_start{0};
+    int16_t delay_reboot{0};
+    int timer_shutdown{-1};
+    int timer_start{-1};
+    int timer_reboot{-1};
+    std::string test_result;
+  };
+
   // Cache static USB descriptor information to avoid expensive repeated descriptor reads.
   bool static_info_cached_{false};
   uint32_t last_static_info_read_ms_{0};
@@ -56,9 +76,17 @@ private:
   std::string cached_firmware_aux_;
   static constexpr uint32_t STATIC_INFO_REFRESH_MS = 300000;  // 5 minutes
 
+  // Slow metrics are expensive to poll over HID; refresh less often and reuse snapshot in-between.
+  bool slow_metrics_cached_{false};
+  uint8_t slow_poll_cycle_{0};
+  static constexpr uint8_t SLOW_POLL_INTERVAL = 3;
+  SlowMetricsCache slow_metrics_cache_;
+
   bool init_hid_communication();
   bool read_hid_report(uint8_t report_id, HidReport &report);
   bool write_hid_report(const HidReport &report);
+  void cache_slow_metrics_(const UpsData &data);
+  void apply_cached_slow_metrics_(UpsData &data) const;
   
   void parse_status_report(const HidReport &report, UpsData &data);
   void parse_battery_report(const HidReport &report, UpsData &data);

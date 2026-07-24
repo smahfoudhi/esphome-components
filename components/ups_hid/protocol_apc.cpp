@@ -318,8 +318,17 @@ bool ApcHidProtocol::read_data(UpsData &data) {
       detect_nominal_power_rating(data.device.model, data);
     }
     
-    // Read missing dynamic values identified from NUT analysis
-    read_missing_dynamic_values(data);
+    // Read expensive HID reports less often to reduce USB bus pressure.
+    bool poll_slow_metrics = (!slow_metrics_cached_) || (++slow_poll_cycle_ >= SLOW_POLL_INTERVAL);
+    if (poll_slow_metrics) {
+      slow_poll_cycle_ = 0;
+      read_missing_dynamic_values(data);
+      cache_slow_metrics_(data);
+      slow_metrics_cached_ = true;
+    } else {
+      apply_cached_slow_metrics_(data);
+      ESP_LOGV(APC_HID_TAG, "Using cached APC slow metrics this cycle");
+    }
     
     ESP_LOGV(APC_HID_TAG, "Successfully read UPS data");
   } else {
@@ -335,6 +344,46 @@ bool ApcHidProtocol::read_data(UpsData &data) {
   }
   
   return success;
+}
+
+void ApcHidProtocol::cache_slow_metrics_(const UpsData &data) {
+  slow_metrics_cache_.battery_voltage_nominal = data.battery.voltage_nominal;
+  slow_metrics_cache_.battery_voltage = data.battery.voltage;
+  slow_metrics_cache_.battery_runtime_low = data.battery.runtime_low;
+  slow_metrics_cache_.battery_charge_low = data.battery.charge_low;
+  slow_metrics_cache_.battery_charge_warning = data.battery.charge_warning;
+  slow_metrics_cache_.battery_type = data.battery.type;
+  slow_metrics_cache_.battery_mfr_date = data.battery.mfr_date;
+  slow_metrics_cache_.input_voltage_nominal = data.power.input_voltage_nominal;
+  slow_metrics_cache_.input_transfer_low = data.power.input_transfer_low;
+  slow_metrics_cache_.input_transfer_high = data.power.input_transfer_high;
+  slow_metrics_cache_.delay_shutdown = data.config.delay_shutdown;
+  slow_metrics_cache_.delay_start = data.config.delay_start;
+  slow_metrics_cache_.delay_reboot = data.config.delay_reboot;
+  slow_metrics_cache_.timer_shutdown = data.test.timer_shutdown;
+  slow_metrics_cache_.timer_start = data.test.timer_start;
+  slow_metrics_cache_.timer_reboot = data.test.timer_reboot;
+  slow_metrics_cache_.test_result = data.test.ups_test_result;
+}
+
+void ApcHidProtocol::apply_cached_slow_metrics_(UpsData &data) const {
+  data.battery.voltage_nominal = slow_metrics_cache_.battery_voltage_nominal;
+  data.battery.voltage = slow_metrics_cache_.battery_voltage;
+  data.battery.runtime_low = slow_metrics_cache_.battery_runtime_low;
+  data.battery.charge_low = slow_metrics_cache_.battery_charge_low;
+  data.battery.charge_warning = slow_metrics_cache_.battery_charge_warning;
+  data.battery.type = slow_metrics_cache_.battery_type;
+  data.battery.mfr_date = slow_metrics_cache_.battery_mfr_date;
+  data.power.input_voltage_nominal = slow_metrics_cache_.input_voltage_nominal;
+  data.power.input_transfer_low = slow_metrics_cache_.input_transfer_low;
+  data.power.input_transfer_high = slow_metrics_cache_.input_transfer_high;
+  data.config.delay_shutdown = slow_metrics_cache_.delay_shutdown;
+  data.config.delay_start = slow_metrics_cache_.delay_start;
+  data.config.delay_reboot = slow_metrics_cache_.delay_reboot;
+  data.test.timer_shutdown = slow_metrics_cache_.timer_shutdown;
+  data.test.timer_start = slow_metrics_cache_.timer_start;
+  data.test.timer_reboot = slow_metrics_cache_.timer_reboot;
+  data.test.ups_test_result = slow_metrics_cache_.test_result;
 }
 
 bool ApcHidProtocol::init_hid_communication() {
