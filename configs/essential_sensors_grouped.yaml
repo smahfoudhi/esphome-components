@@ -91,6 +91,25 @@ sensor:
       sorting_weight: 20
 
 text_sensor:
+  # === POWER STATUS GROUP ===
+  - platform: ups_hid
+    ups_hid_id: ups_monitor
+    name: "Code d'état"
+    id: ups_status_code
+    type: status_code
+    web_server:
+      sorting_group_id: ups_power_status
+      sorting_weight: 10
+
+  - platform: ups_hid
+    ups_hid_id: ups_monitor
+    name: "État"
+    id: ups_status_text
+    type: status
+    web_server:
+      sorting_group_id: ups_power_status
+      sorting_weight: 20
+
   # === DEVICE INFORMATION GROUP ===
   - platform: ups_hid
     ups_hid_id: ups_monitor

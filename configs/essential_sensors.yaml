@@ -66,6 +66,18 @@ sensor:
     update_interval: 60s
 
 text_sensor:
+  - platform: ups_hid
+    ups_hid_id: ups_monitor
+    name: "Code d'état"
+    id: ups_status_code
+    type: status_code
+
+  - platform: ups_hid
+    ups_hid_id: ups_monitor
+    name: "État"
+    id: ups_status_text
+    type: status
+
   # Device identification
   - platform: ups_hid
     ups_hid_id: ups_monitor
