@@ -970,30 +970,7 @@ std::string NutServerComponent::get_ups_status() const {
   if (!ups_hid_ || !ups_hid_->is_connected()) {
     return "";
   }
-  
-  std::string status;
-  if (ups_hid_->is_online()) {
-    status = "OL";  // Online
-  } else if (ups_hid_->is_on_battery()) {
-    status = "OB";  // On Battery
-  }
-  
-  if (ups_hid_->is_low_battery()) {
-    if (!status.empty()) status += " ";
-    status += "LB";  // Low Battery
-  }
-  
-  if (ups_hid_->is_charging()) {
-    if (!status.empty()) status += " ";
-    status += "CHRG";  // Charging
-  }
-  
-  if (ups_hid_->has_fault()) {
-    if (!status.empty()) status += " ";
-    status += "ALARM";  // Alarm condition
-  }
-  
-  return status;
+  return ups_hid_->get_nut_status_code();
 }
 
 std::string NutServerComponent::get_ups_manufacturer() const {

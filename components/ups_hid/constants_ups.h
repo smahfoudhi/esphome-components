@@ -214,6 +214,7 @@ namespace text_sensor_type {
     static constexpr const char* MANUFACTURER = "manufacturer";
     static constexpr const char* SERIAL_NUMBER = "serial_number";
     static constexpr const char* FIRMWARE_VERSION = "firmware_version";
+    static constexpr const char* STATUS_CODE = "status_code";
     static constexpr const char* BATTERY_STATUS = "battery_status";
     static constexpr const char* UPS_TEST_RESULT = "ups_test_result";
     static constexpr const char* UPS_BEEPER_STATUS = "ups_beeper_status";

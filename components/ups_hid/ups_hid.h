@@ -109,6 +109,7 @@ namespace esphome
       float get_output_voltage() const;
       float get_load_percent() const;
       float get_runtime_minutes() const;
+      std::string get_nut_status_code() const;
       
       // Test control methods
       bool start_battery_test_quick();

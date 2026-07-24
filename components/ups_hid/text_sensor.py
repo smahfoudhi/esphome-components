@@ -16,6 +16,7 @@ UpsHidTextSensor = ups_hid_ns.class_(
 TEXT_SENSOR_TYPES = [
     "model",
     "manufacturer",
+    "status_code",
     "status",
     "protocol",
     "serial_number",

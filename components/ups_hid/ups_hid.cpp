@@ -423,6 +423,8 @@ void UpsHidComponent::update_sensors() {
       value = ups_data_.device.model;
     } else if (type == text_sensor_type::MANUFACTURER && !ups_data_.device.manufacturer.empty()) {
       value = ups_data_.device.manufacturer;
+    } else if (type == text_sensor_type::STATUS_CODE) {
+      value = get_nut_status_code();
     } else if (type == text_sensor_type::SERIAL_NUMBER && !ups_data_.device.serial_number.empty()) {
       value = ups_data_.device.serial_number;
     } else if (type == text_sensor_type::FIRMWARE_VERSION && !ups_data_.device.firmware_version.empty()) {
@@ -791,6 +793,76 @@ float UpsHidComponent::get_load_percent() const {
 float UpsHidComponent::get_runtime_minutes() const {
   std::lock_guard<std::mutex> lock(data_mutex_);
   return ups_data_.battery.runtime_minutes;
+}
+
+std::string UpsHidComponent::get_nut_status_code() const {
+  std::lock_guard<std::mutex> lock(data_mutex_);
+
+  const auto &data = ups_data_;
+  std::string status;
+
+  auto append_flag = [&](const char *flag) {
+    if (status.find(flag) != std::string::npos) {
+      return;
+    }
+    if (!status.empty()) {
+      status += " ";
+    }
+    status += flag;
+  };
+
+  auto contains_text = [](const std::string &value, const char *needle) {
+    return value.find(needle) != std::string::npos;
+  };
+
+  bool online = data.power.input_voltage_valid();
+  bool on_battery = !online;
+  bool has_fault = data.power.is_input_out_of_range() ||
+                   (!data.power.is_valid() && !data.battery.is_valid());
+  bool charging = (online && data.battery.is_valid() && !std::isnan(data.battery.level) && data.battery.level < 100.0f) ||
+                  contains_text(data.battery.status, "Charging");
+  bool discharging = on_battery || contains_text(data.battery.status, "Discharging");
+  bool low_battery = data.battery.is_low() ||
+                     (!std::isnan(data.battery.level) && data.battery.level <= 10.0f) ||
+                     contains_text(data.battery.status, "Low") ||
+                     contains_text(data.battery.status, "Critical") ||
+                     contains_text(data.battery.status, "Shutdown Imminent");
+  bool overloaded = data.power.is_overloaded() || contains_text(data.power.status, "Overload");
+  bool replace_battery = contains_text(data.battery.status, "Replace Battery") ||
+                         contains_text(data.battery.status, "Check Battery") ||
+                         contains_text(data.battery.status, "Internal Failure");
+
+  if (online) {
+    append_flag("OL");
+  } else if (on_battery) {
+    append_flag("OB");
+  }
+
+  if (discharging) {
+    append_flag("DISCHRG");
+  }
+
+  if (low_battery) {
+    append_flag("LB");
+  }
+
+  if (charging) {
+    append_flag("CHRG");
+  }
+
+  if (overloaded) {
+    append_flag("OVER");
+  }
+
+  if (replace_battery) {
+    append_flag("RB");
+  }
+
+  if (has_fault) {
+    append_flag("ALARM");
+  }
+
+  return status.empty() ? "UNKNOWN" : status;
 }
 
 
