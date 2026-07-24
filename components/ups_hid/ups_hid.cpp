@@ -18,81 +18,9 @@
 namespace esphome {
 namespace ups_hid {
 
-namespace {
-
-bool protocol_registered_for_vendor(uint16_t vendor_id, const std::string &name) {
-  auto all_protocols = ProtocolFactory::get_all_protocols();
-  for (const auto &entry : all_protocols) {
-    if (entry.first == vendor_id && entry.second.name == name) {
-      return true;
-    }
-  }
-  return false;
-}
-
-bool fallback_protocol_registered(const std::string &name) {
-  auto all_protocols = ProtocolFactory::get_all_protocols();
-  for (const auto &entry : all_protocols) {
-    if (entry.first == 0x0000 && entry.second.name == name) {
-      return true;
-    }
-  }
-  return false;
-}
-
-void ensure_builtin_protocols_registered() {
-  static bool initialized = false;
-  if (initialized) {
-    return;
-  }
-  initialized = true;
-
-  if (!protocol_registered_for_vendor(0x051D, "APC HID Protocol")) {
-    ProtocolFactory::ProtocolInfo apc_info;
-    apc_info.creator = [](UpsHidComponent *parent) {
-      return std::make_unique<ApcHidProtocol>(parent);
-    };
-    apc_info.name = "APC HID Protocol";
-    apc_info.description = "APC Back-UPS and Smart-UPS HID protocol implementation with comprehensive sensor support";
-    apc_info.supported_vendors = {0x051D};
-    apc_info.priority = 100;
-    ProtocolFactory::register_protocol_for_vendor(0x051D, apc_info);
-  }
-
-  if (!protocol_registered_for_vendor(0x0764, "CyberPower HID Protocol")) {
-    ProtocolFactory::ProtocolInfo cp_info;
-    cp_info.creator = [](UpsHidComponent *parent) {
-      return std::make_unique<CyberPowerProtocol>(parent);
-    };
-    cp_info.name = "CyberPower HID Protocol";
-    cp_info.description = "CyberPower CP series HID protocol with comprehensive sensor support and test functionality";
-    cp_info.supported_vendors = {0x0764};
-    cp_info.priority = 100;
-    ProtocolFactory::register_protocol_for_vendor(0x0764, cp_info);
-  }
-
-  if (!fallback_protocol_registered("Generic HID Protocol")) {
-    ProtocolFactory::ProtocolInfo generic_info;
-    generic_info.creator = [](UpsHidComponent *parent) {
-      return std::make_unique<GenericHidProtocol>(parent);
-    };
-    generic_info.name = "Generic HID Protocol";
-    generic_info.description = "Universal HID protocol fallback for unknown UPS vendors with basic monitoring capabilities";
-    generic_info.supported_vendors = {};
-    generic_info.priority = 10;
-    ProtocolFactory::register_fallback_protocol(generic_info);
-  }
-}
-
-}  // namespace
-
 void UpsHidComponent::setup() {
   ESP_LOGCONFIG(TAG, log_messages::SETTING_UP);
 
-  // Ensure protocol registry is populated even when static self-registration
-  // objects are removed by linker garbage collection.
-  ensure_builtin_protocols_registered();
-  
   if (!initialize_transport()) {
     ESP_LOGE(TAG, log_messages::TRANSPORT_INIT_FAILED);
     mark_failed();
