@@ -2,7 +2,10 @@ import esphome.codegen as cg
 import esphome.config_validation as cv
 from esphome.components import sensor
 from esphome.const import (
+    CONF_ACCURACY_DECIMALS,
+    CONF_DEVICE_CLASS,
     CONF_TYPE,
+    CONF_UNIT_OF_MEASUREMENT,
     DEVICE_CLASS_BATTERY,
     DEVICE_CLASS_VOLTAGE,
     DEVICE_CLASS_POWER_FACTOR,
@@ -133,14 +136,23 @@ SENSOR_TYPES = {
 }
 
 
-CONFIG_SCHEMA = sensor.sensor_schema(
-    UpsHidSensor,
-    accuracy_decimals=1,
-).extend(
-    {
-        cv.GenerateID(CONF_UPS_HID_ID): cv.use_id(UpsHidComponent),
-        cv.Required(CONF_TYPE): cv.one_of(*SENSOR_TYPES, lower=True),
-    }
+def apply_sensor_type_defaults(config):
+    sensor_config = SENSOR_TYPES[config[CONF_TYPE]]
+    config.setdefault(CONF_UNIT_OF_MEASUREMENT, sensor_config["unit"])
+    if "device_class" in sensor_config:
+        config.setdefault(CONF_DEVICE_CLASS, sensor_config["device_class"])
+    config.setdefault(CONF_ACCURACY_DECIMALS, sensor_config["accuracy_decimals"])
+    return config
+
+
+CONFIG_SCHEMA = cv.All(
+    sensor.sensor_schema(UpsHidSensor).extend(
+        {
+            cv.GenerateID(CONF_UPS_HID_ID): cv.use_id(UpsHidComponent),
+            cv.Required(CONF_TYPE): cv.one_of(*SENSOR_TYPES, lower=True),
+        }
+    ),
+    apply_sensor_type_defaults,
 )
 
 
@@ -153,16 +165,3 @@ async def to_code(config):
     cg.add(var.set_sensor_type(sensor_type))
     cg.add(parent.register_sensor(var, sensor_type))
 
-    # Apply sensor type specific configuration
-    if sensor_type in SENSOR_TYPES:
-        sensor_config = SENSOR_TYPES[sensor_type]
-
-        # Override config with sensor type defaults if not specified
-        if "unit_of_measurement" not in config and "unit" in sensor_config:
-            cg.add(var.set_unit_of_measurement(sensor_config["unit"]))
-
-        if "device_class" not in config and "device_class" in sensor_config:
-            cg.add(var.set_device_class(sensor_config["device_class"]))
-
-        if "accuracy_decimals" not in config and "accuracy_decimals" in sensor_config:
-            cg.add(var.set_accuracy_decimals(sensor_config["accuracy_decimals"]))
