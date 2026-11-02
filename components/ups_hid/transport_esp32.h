@@ -84,6 +84,9 @@ private:
     std::atomic<uint32_t> stall_since_tick_{0};
     std::atomic<uint32_t> last_recovery_tick_{0};
     usb_device_handle_t pending_close_hdl_{nullptr};
+    bool port_powered_off_{false};
+    uint32_t port_off_tick_{0};
+    uint32_t port_on_attempts_{0};
     
     static void control_transfer_cb_(usb_transfer_t *transfer);
     esp_err_t run_control_transfer_(usb_transfer_t *transfer, uint32_t timeout_ms,

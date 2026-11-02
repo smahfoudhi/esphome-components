@@ -18,6 +18,7 @@ static constexpr uint8_t XFER_DONE = 1;
 static constexpr uint8_t XFER_ABANDONED = 2;
 static constexpr uint32_t LINK_RECOVERY_DELAY_MS = 2000;
 static constexpr uint32_t LINK_RECOVERY_RETRY_MS = 30000;
+static constexpr uint32_t PORT_POWER_ON_RETRY_MS = 500;
 
 struct Esp32UsbTransport::ControlContext {
     Esp32UsbTransport *owner;
@@ -436,11 +437,31 @@ void Esp32UsbTransport::on_abandoned_transfer_done_() {
     }
 }
 
+// Runs in the USB client task so device-gone events are handled between steps
 void Esp32UsbTransport::maybe_recover_stalled_link_() {
+    const uint32_t now = xTaskGetTickCount();
+    if (port_powered_off_) {
+        if (now - port_off_tick_ < pdMS_TO_TICKS(PORT_POWER_ON_RETRY_MS)) {
+            return;
+        }
+        port_on_attempts_++;
+        esp_err_t ret = usb_host_lib_set_root_port_power(true);
+        if (ret == ESP_OK) {
+            port_powered_off_ = false;
+            ESP_LOGI(ESP32_USB_TAG, "USB port powered on again");
+        } else {
+            port_off_tick_ = now;
+            if (port_on_attempts_ % 20 == 1) {
+                ESP_LOGW(ESP32_USB_TAG, "USB port power-on pending (attempt %u): %s",
+                         static_cast<unsigned>(port_on_attempts_), esp_err_to_name(ret));
+            }
+        }
+        return;
+    }
+    
     if (!link_stalled_.load()) {
         return;
     }
-    const uint32_t now = xTaskGetTickCount();
     if (now - stall_since_tick_.load() < pdMS_TO_TICKS(LINK_RECOVERY_DELAY_MS)) {
         return;
     }
@@ -456,11 +477,9 @@ void Esp32UsbTransport::maybe_recover_stalled_link_() {
         ESP_LOGE(ESP32_USB_TAG, "Failed to power off USB port: %s", esp_err_to_name(ret));
         return;
     }
-    vTaskDelay(pdMS_TO_TICKS(500));
-    ret = usb_host_lib_set_root_port_power(true);
-    if (ret != ESP_OK) {
-        ESP_LOGE(ESP32_USB_TAG, "Failed to power on USB port: %s", esp_err_to_name(ret));
-    }
+    port_powered_off_ = true;
+    port_off_tick_ = now;
+    port_on_attempts_ = 0;
 }
 
 std::string Esp32UsbTransport::get_last_error() const {
