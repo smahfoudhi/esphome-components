@@ -58,6 +58,10 @@ void UpsHidComponent::update() {
   
   // Normal data reading with active protocol
   if (read_ups_data()) {
+    if (!transport_->is_connected()) {
+      ESP_LOGW(TAG, "USB link lost during polling, keeping previous values");
+      return;
+    }
     update_sensors();
     consecutive_failures_ = 0;
     last_successful_read_ = millis();

@@ -2,6 +2,9 @@
 #include "constants_ups.h"
 #include "esphome/core/log.h"
 #include "esphome/core/helpers.h"
+#include <algorithm>
+#include <cstring>
+#include <new>
 
 #ifdef USE_ESP32
 
@@ -9,6 +12,20 @@ namespace esphome {
 namespace ups_hid {
 
 static const char *const ESP32_USB_TAG = "ups_hid.esp32_usb";
+
+static constexpr uint8_t XFER_PENDING = 0;
+static constexpr uint8_t XFER_DONE = 1;
+static constexpr uint8_t XFER_ABANDONED = 2;
+static constexpr uint32_t LINK_RECOVERY_DELAY_MS = 2000;
+static constexpr uint32_t LINK_RECOVERY_RETRY_MS = 30000;
+
+struct Esp32UsbTransport::ControlContext {
+    Esp32UsbTransport *owner;
+    SemaphoreHandle_t sem;
+    std::atomic<uint8_t> state{XFER_PENDING};
+    usb_transfer_status_t status{USB_TRANSFER_STATUS_ERROR};
+    size_t actual_bytes{0};
+};
 
 // USB HID Class defines
 #ifndef USB_CLASS_HID
@@ -73,7 +90,7 @@ esp_err_t Esp32UsbTransport::deinitialize() {
 }
 
 bool Esp32UsbTransport::is_connected() const {
-    return connected_.load() && initialized_.load();
+    return connected_.load() && initialized_.load() && !link_stalled_.load();
 }
 
 uint16_t Esp32UsbTransport::get_vendor_id() const {
@@ -89,6 +106,9 @@ uint16_t Esp32UsbTransport::get_product_id() const {
 esp_err_t Esp32UsbTransport::hid_get_report(uint8_t report_type, uint8_t report_id, 
                                            uint8_t* data, size_t* data_len, 
                                            uint32_t timeout_ms) {
+    if (link_stalled_.load()) {
+        return ESP_ERR_INVALID_STATE;
+    }
     if (!device_.dev_hdl) {
         ESP_LOGE(ESP32_USB_TAG, "HID GET_REPORT: No device handle");
         return ESP_ERR_INVALID_ARG;
@@ -136,60 +156,31 @@ esp_err_t Esp32UsbTransport::hid_get_report(uint8_t report_type, uint8_t report_
     setup->wIndex = wIndex;
     setup->wLength = wLength;
     
-    // Use semaphore for synchronous operation
-    SemaphoreHandle_t done_sem = xSemaphoreCreateBinary();
-    if (!done_sem) {
-        usb_host_transfer_free(transfer);
-        return ESP_ERR_NO_MEM;
+    size_t received = *data_len;
+    ret = run_control_transfer_(transfer, timeout_ms, data, &received);
+    if (ret == ESP_OK && received > 0) {
+        *data_len = received;
+        ESP_LOGD(ESP32_USB_TAG, "HID GET_REPORT success: received %zu bytes", *data_len);
+        return ESP_OK;
     }
-    
-    // Simple context for completion
-    struct {
-        SemaphoreHandle_t sem;
-        esp_err_t result;
-        size_t actual_bytes;
-    } ctx = {done_sem, ESP_ERR_TIMEOUT, 0};
-    
-    transfer->context = &ctx;
-    transfer->callback = [](usb_transfer_t *t) {
-        auto *c = static_cast<decltype(ctx)*>(t->context);
-        c->result = (t->status == USB_TRANSFER_STATUS_COMPLETED) ? ESP_OK : ESP_FAIL;
-        c->actual_bytes = t->actual_num_bytes;
-        xSemaphoreGive(c->sem);
-    };
-    
-    ret = usb_host_transfer_submit_control(device_.client_hdl, transfer);
-    if (ret == ESP_OK) {
-        if (xSemaphoreTake(done_sem, pdMS_TO_TICKS(timeout_ms)) == pdTRUE) {
-            ret = ctx.result;
-            if (ret == ESP_OK && ctx.actual_bytes > sizeof(usb_setup_packet_t)) {
-                size_t data_received = ctx.actual_bytes - sizeof(usb_setup_packet_t);
-                size_t copy_len = std::min(data_received, *data_len);
-                memcpy(data, transfer->data_buffer + sizeof(usb_setup_packet_t), copy_len);
-                *data_len = copy_len;
-                
-                ESP_LOGD(ESP32_USB_TAG, "HID GET_REPORT success: received %zu bytes", *data_len);
-            } else {
-                ESP_LOGW(ESP32_USB_TAG, "HID GET_REPORT: No data received");
-                *data_len = 0;
-                ret = ESP_FAIL;
-            }
-        } else {
-            ESP_LOGW(ESP32_USB_TAG, "HID GET_REPORT timeout");
-            ret = ESP_ERR_TIMEOUT;
-        }
+    *data_len = 0;
+    if (ret == ESP_ERR_TIMEOUT) {
+        ESP_LOGW(ESP32_USB_TAG, "HID GET_REPORT timeout");
+    } else if (ret == ESP_OK) {
+        ESP_LOGW(ESP32_USB_TAG, "HID GET_REPORT: No data received");
+        ret = ESP_FAIL;
     } else {
-        ESP_LOGW(ESP32_USB_TAG, "Failed to submit HID GET_REPORT: %s", esp_err_to_name(ret));
+        ESP_LOGW(ESP32_USB_TAG, "HID GET_REPORT failed: %s", esp_err_to_name(ret));
     }
-    
-    vSemaphoreDelete(done_sem);
-    usb_host_transfer_free(transfer);
     return ret;
 }
 
 esp_err_t Esp32UsbTransport::hid_set_report(uint8_t report_type, uint8_t report_id,
                                            const uint8_t* data, size_t data_len,
                                            uint32_t timeout_ms) {
+    if (link_stalled_.load()) {
+        return ESP_ERR_INVALID_STATE;
+    }
     if (!device_.dev_hdl) {
         ESP_LOGE(ESP32_USB_TAG, "HID SET_REPORT: No device handle");
         return ESP_ERR_INVALID_ARG;
@@ -236,45 +227,14 @@ esp_err_t Esp32UsbTransport::hid_set_report(uint8_t report_type, uint8_t report_
     // Copy data to transfer buffer
     memcpy(transfer->data_buffer + sizeof(usb_setup_packet_t), data, data_len);
     
-    // Use semaphore for synchronous operation
-    SemaphoreHandle_t done_sem = xSemaphoreCreateBinary();
-    if (!done_sem) {
-        usb_host_transfer_free(transfer);
-        return ESP_ERR_NO_MEM;
-    }
-    
-    // Simple context for completion
-    struct {
-        SemaphoreHandle_t sem;
-        esp_err_t result;
-    } ctx = {done_sem, ESP_ERR_TIMEOUT};
-    
-    transfer->context = &ctx;
-    transfer->callback = [](usb_transfer_t *t) {
-        auto *c = static_cast<decltype(ctx)*>(t->context);
-        c->result = (t->status == USB_TRANSFER_STATUS_COMPLETED) ? ESP_OK : ESP_FAIL;
-        xSemaphoreGive(c->sem);
-    };
-    
-    ret = usb_host_transfer_submit_control(device_.client_hdl, transfer);
+    ret = run_control_transfer_(transfer, timeout_ms, nullptr, nullptr);
     if (ret == ESP_OK) {
-        if (xSemaphoreTake(done_sem, pdMS_TO_TICKS(timeout_ms)) == pdTRUE) {
-            ret = ctx.result;
-            if (ret == ESP_OK) {
-                ESP_LOGD(ESP32_USB_TAG, "HID SET_REPORT success");
-            } else {
-                ESP_LOGW(ESP32_USB_TAG, "HID SET_REPORT failed");
-            }
-        } else {
-            ESP_LOGW(ESP32_USB_TAG, "HID SET_REPORT timeout");
-            ret = ESP_ERR_TIMEOUT;
-        }
+        ESP_LOGD(ESP32_USB_TAG, "HID SET_REPORT success");
+    } else if (ret == ESP_ERR_TIMEOUT) {
+        ESP_LOGW(ESP32_USB_TAG, "HID SET_REPORT timeout");
     } else {
-        ESP_LOGW(ESP32_USB_TAG, "Failed to submit HID SET_REPORT: %s", esp_err_to_name(ret));
+        ESP_LOGW(ESP32_USB_TAG, "HID SET_REPORT failed: %s", esp_err_to_name(ret));
     }
-    
-    vSemaphoreDelete(done_sem);
-    usb_host_transfer_free(transfer);
     return ret;
 }
 
@@ -282,6 +242,9 @@ esp_err_t Esp32UsbTransport::get_string_descriptor(uint8_t string_index,
                                                  std::string& result) {
     result.clear();
     
+    if (link_stalled_.load()) {
+        return ESP_ERR_INVALID_STATE;
+    }
     if (!device_.dev_hdl) {
         set_last_error("USB device not ready");
         return ESP_ERR_INVALID_STATE;
@@ -324,36 +287,15 @@ esp_err_t Esp32UsbTransport::get_string_descriptor(uint8_t string_index,
     setup->wIndex = wIndex;
     setup->wLength = wLength;
     
-    // Use semaphore for synchronous operation
-    SemaphoreHandle_t done_sem = xSemaphoreCreateBinary();
-    if (!done_sem) {
-        usb_host_transfer_free(transfer);
-        return ESP_ERR_NO_MEM;
-    }
-    
-    // Context for completion
-    struct {
-        SemaphoreHandle_t sem;
-        esp_err_t result;
-        size_t actual_bytes;
-    } ctx = {done_sem, ESP_ERR_TIMEOUT, 0};
-    
-    transfer->context = &ctx;
-    transfer->callback = [](usb_transfer_t *t) {
-        auto *c = static_cast<decltype(ctx)*>(t->context);
-        c->result = (t->status == USB_TRANSFER_STATUS_COMPLETED) ? ESP_OK : ESP_FAIL;
-        c->actual_bytes = t->actual_num_bytes;
-        xSemaphoreGive(c->sem);
-    };
-    
-    ret = usb_host_transfer_submit_control(device_.client_hdl, transfer);
-    if (ret == ESP_OK) {
-        if (xSemaphoreTake(done_sem, pdMS_TO_TICKS(timing::USB_SEMAPHORE_TIMEOUT_MS)) == pdTRUE) {
-            ret = ctx.result;
-            if (ret == ESP_OK && ctx.actual_bytes > sizeof(usb_setup_packet_t)) {
+    uint8_t desc_buf[max_string_len];
+    size_t received = sizeof(desc_buf);
+    ret = run_control_transfer_(transfer, timing::USB_CONTROL_TRANSFER_TIMEOUT_MS, desc_buf, &received);
+    if (ret != ESP_ERR_TIMEOUT) {
+        if (ret == ESP_OK) {
+            if (received > 0) {
                 // Parse the USB string descriptor
-                uint8_t *desc_data = transfer->data_buffer + sizeof(usb_setup_packet_t);
-                size_t desc_len = ctx.actual_bytes - sizeof(usb_setup_packet_t);
+                uint8_t *desc_data = desc_buf;
+                size_t desc_len = received;
                 
                 if (desc_len >= 2) {
                     uint8_t bLength = desc_data[0];        // Total length of descriptor
@@ -396,16 +338,129 @@ esp_err_t Esp32UsbTransport::get_string_descriptor(uint8_t string_index,
                 ret = ESP_FAIL;
             }
         } else {
-            ESP_LOGW(ESP32_USB_TAG, "USB string descriptor request timeout");
-            ret = ESP_ERR_TIMEOUT;
+            ESP_LOGW(ESP32_USB_TAG, "USB string descriptor request failed: %s", esp_err_to_name(ret));
         }
     } else {
-        ESP_LOGW(ESP32_USB_TAG, "Failed to submit string descriptor request: %s", esp_err_to_name(ret));
+        ESP_LOGW(ESP32_USB_TAG, "USB string descriptor request timeout");
+    }
+    return ret;
+}
+
+void Esp32UsbTransport::control_transfer_cb_(usb_transfer_t *transfer) {
+    auto *ctx = static_cast<ControlContext *>(transfer->context);
+    ctx->status = transfer->status;
+    ctx->actual_bytes = transfer->actual_num_bytes;
+    if (ctx->state.exchange(XFER_DONE) == XFER_ABANDONED) {
+        Esp32UsbTransport *owner = ctx->owner;
+        vSemaphoreDelete(ctx->sem);
+        delete ctx;
+        usb_host_transfer_free(transfer);
+        owner->on_abandoned_transfer_done_();
+        return;
+    }
+    xSemaphoreGive(ctx->sem);
+}
+
+// Takes ownership of the transfer; a timed-out transfer stays in flight and is freed by its callback.
+esp_err_t Esp32UsbTransport::run_control_transfer_(usb_transfer_t *transfer, uint32_t timeout_ms,
+                                                   uint8_t *in_data, size_t *in_len) {
+    auto *ctx = new (std::nothrow) ControlContext();
+    if (ctx == nullptr) {
+        usb_host_transfer_free(transfer);
+        return ESP_ERR_NO_MEM;
+    }
+    ctx->owner = this;
+    ctx->sem = xSemaphoreCreateBinary();
+    if (ctx->sem == nullptr) {
+        delete ctx;
+        usb_host_transfer_free(transfer);
+        return ESP_ERR_NO_MEM;
     }
     
-    vSemaphoreDelete(done_sem);
+    transfer->callback = control_transfer_cb_;
+    transfer->context = ctx;
+    transfer->timeout_ms = timeout_ms;
+    
+    esp_err_t ret = usb_host_transfer_submit_control(device_.client_hdl, transfer);
+    if (ret != ESP_OK) {
+        vSemaphoreDelete(ctx->sem);
+        delete ctx;
+        usb_host_transfer_free(transfer);
+        return ret;
+    }
+    
+    if (xSemaphoreTake(ctx->sem, pdMS_TO_TICKS(timeout_ms)) != pdTRUE) {
+        uint8_t expected = XFER_PENDING;
+        if (ctx->state.compare_exchange_strong(expected, XFER_ABANDONED)) {
+            abandoned_transfers_++;
+            if (!link_stalled_.exchange(true)) {
+                stall_since_tick_ = xTaskGetTickCount();
+                last_recovery_tick_ = 0;
+                ESP_LOGW(ESP32_USB_TAG, "USB control transfer stuck - suspending USB requests");
+            }
+            return ESP_ERR_TIMEOUT;
+        }
+        // Completed between the timeout and the abandon attempt
+        xSemaphoreTake(ctx->sem, portMAX_DELAY);
+    }
+    
+    ret = (ctx->status == USB_TRANSFER_STATUS_COMPLETED) ? ESP_OK : ESP_FAIL;
+    if (in_data != nullptr && in_len != nullptr) {
+        size_t payload = ctx->actual_bytes > sizeof(usb_setup_packet_t)
+                             ? ctx->actual_bytes - sizeof(usb_setup_packet_t) : 0;
+        size_t copy_len = (ret == ESP_OK) ? std::min(payload, *in_len) : 0;
+        if (copy_len > 0) {
+            memcpy(in_data, transfer->data_buffer + sizeof(usb_setup_packet_t), copy_len);
+        }
+        *in_len = copy_len;
+    }
+    
+    vSemaphoreDelete(ctx->sem);
+    delete ctx;
     usb_host_transfer_free(transfer);
     return ret;
+}
+
+// Runs in the USB client task, like handle_device_gone()
+void Esp32UsbTransport::on_abandoned_transfer_done_() {
+    if (abandoned_transfers_.fetch_sub(1) != 1) {
+        return;
+    }
+    if (pending_close_hdl_ != nullptr) {
+        usb_host_interface_release(device_.client_hdl, pending_close_hdl_, device_.interface_num);
+        usb_host_device_close(device_.client_hdl, pending_close_hdl_);
+        pending_close_hdl_ = nullptr;
+    }
+    if (link_stalled_.exchange(false)) {
+        ESP_LOGI(ESP32_USB_TAG, "USB control link recovered");
+    }
+}
+
+void Esp32UsbTransport::maybe_recover_stalled_link_() {
+    if (!link_stalled_.load()) {
+        return;
+    }
+    const uint32_t now = xTaskGetTickCount();
+    if (now - stall_since_tick_.load() < pdMS_TO_TICKS(LINK_RECOVERY_DELAY_MS)) {
+        return;
+    }
+    const uint32_t last = last_recovery_tick_.load();
+    if (last != 0 && now - last < pdMS_TO_TICKS(LINK_RECOVERY_RETRY_MS)) {
+        return;
+    }
+    last_recovery_tick_ = now | 1;
+    
+    ESP_LOGW(ESP32_USB_TAG, "USB control link stalled - power-cycling the USB port");
+    esp_err_t ret = usb_host_lib_set_root_port_power(false);
+    if (ret != ESP_OK) {
+        ESP_LOGE(ESP32_USB_TAG, "Failed to power off USB port: %s", esp_err_to_name(ret));
+        return;
+    }
+    vTaskDelay(pdMS_TO_TICKS(500));
+    ret = usb_host_lib_set_root_port_power(true);
+    if (ret != ESP_OK) {
+        ESP_LOGE(ESP32_USB_TAG, "Failed to power on USB port: %s", esp_err_to_name(ret));
+    }
 }
 
 std::string Esp32UsbTransport::get_last_error() const {
@@ -748,6 +803,7 @@ void Esp32UsbTransport::handle_new_device(uint8_t dev_addr) {
             if (ret == ESP_OK) {
                 ret = find_endpoints();
                 if (ret == ESP_OK) {
+                    link_stalled_ = false;
                     connected_ = true;
                     ESP_LOGI(ESP32_USB_TAG, "UPS device successfully configured and ready");
                     return;
@@ -774,7 +830,11 @@ void Esp32UsbTransport::handle_device_gone(usb_device_handle_t dev_hdl) {
         // Clean up device resources
         if (device_.dev_hdl) {
             usb_host_interface_release(device_.client_hdl, device_.dev_hdl, device_.interface_num);
-            usb_host_device_close(device_.client_hdl, device_.dev_hdl);
+            if (usb_host_device_close(device_.client_hdl, device_.dev_hdl) != ESP_OK &&
+                abandoned_transfers_.load() > 0) {
+                // Closed once its abandoned transfers have been returned
+                pending_close_hdl_ = device_.dev_hdl;
+            }
             device_.dev_hdl = nullptr;
         }
         
@@ -867,6 +927,8 @@ void Esp32UsbTransport::usb_client_task(void* arg) {
             ESP_LOGD(ESP32_USB_TAG, "No USB client handle available");
             vTaskDelay(pdMS_TO_TICKS(100));
         }
+        
+        transport->maybe_recover_stalled_link_();
         
         // Small delay to prevent busy-waiting
         vTaskDelay(pdMS_TO_TICKS(10));

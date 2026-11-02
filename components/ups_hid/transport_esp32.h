@@ -77,6 +77,20 @@ private:
     mutable std::mutex error_mutex_;
     std::string last_error_;
     
+    // Control link stall tracking
+    struct ControlContext;
+    std::atomic<bool> link_stalled_{false};
+    std::atomic<uint32_t> abandoned_transfers_{0};
+    std::atomic<uint32_t> stall_since_tick_{0};
+    std::atomic<uint32_t> last_recovery_tick_{0};
+    usb_device_handle_t pending_close_hdl_{nullptr};
+    
+    static void control_transfer_cb_(usb_transfer_t *transfer);
+    esp_err_t run_control_transfer_(usb_transfer_t *transfer, uint32_t timeout_ms,
+                                    uint8_t *in_data, size_t *in_len);
+    void on_abandoned_transfer_done_();
+    void maybe_recover_stalled_link_();
+    
     // Private methods
     static void usb_lib_task(void* arg);
     static void usb_client_task(void* arg);

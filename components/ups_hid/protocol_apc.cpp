@@ -288,7 +288,7 @@ bool ApcHidProtocol::read_data(UpsData &data) {
       }
 
       last_static_info_read_ms_ = now;
-      static_info_cached_ = true;
+      static_info_cached_ = parent_->is_device_connected();
     } else {
       // Reuse cached static values on normal polling cycles to avoid descriptor timeouts.
       data.device.manufacturer = cached_manufacturer_;
@@ -317,8 +317,10 @@ bool ApcHidProtocol::read_data(UpsData &data) {
     if (poll_slow_metrics) {
       slow_poll_cycle_ = 0;
       read_missing_dynamic_values(data);
-      cache_slow_metrics_(data);
-      slow_metrics_cached_ = true;
+      if (parent_->is_device_connected()) {
+        cache_slow_metrics_(data);
+        slow_metrics_cached_ = true;
+      }
     } else {
       apply_cached_slow_metrics_(data);
       ESP_LOGV(APC_HID_TAG, "Using cached APC slow metrics this cycle");
