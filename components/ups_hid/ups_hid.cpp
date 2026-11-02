@@ -62,8 +62,17 @@ void UpsHidComponent::update() {
     consecutive_failures_ = 0;
     last_successful_read_ = millis();
     
-    // Check for timer updates (fast polling during countdowns)
-    check_and_update_timers();
+    // Timer polling adds USB traffic; only enable it when timer entities are configured.
+    bool timer_sensors_configured = false;
+  #ifdef USE_SENSOR
+    timer_sensors_configured =
+      sensors_.find(sensor_type::UPS_TIMER_SHUTDOWN) != sensors_.end() ||
+      sensors_.find(sensor_type::UPS_TIMER_START) != sensors_.end() ||
+      sensors_.find(sensor_type::UPS_TIMER_REBOOT) != sensors_.end();
+  #endif
+    if (timer_sensors_configured) {
+      check_and_update_timers();
+    }
   } else {
     consecutive_failures_++;
     ESP_LOGW(TAG, log_messages::READ_FAILED, consecutive_failures_);
@@ -403,12 +412,22 @@ void UpsHidComponent::update_sensors() {
     
     bool state = false;
     
-    if (type == binary_sensor_type::ONLINE && data.power.input_voltage_valid()) {
-      state = true;
-    } else if (type == binary_sensor_type::ON_BATTERY && data.power.input_voltage_valid()) {
-      state = false; // Opposite of online
+    if (type == binary_sensor_type::ONLINE) {
+      state = data.power.input_voltage_valid();
+    } else if (type == binary_sensor_type::ON_BATTERY) {
+      state = data.power.status == status::ON_BATTERY;
     } else if (type == binary_sensor_type::LOW_BATTERY) {
       state = data.battery.is_low();
+    } else if (type == binary_sensor_type::CHARGING) {
+      state = data.battery.status.find(battery_status::CHARGING) != std::string::npos;
+    } else if (type == binary_sensor_type::OVERLOAD) {
+      state = data.power.is_overloaded() ||
+              data.power.status.find("Overload") != std::string::npos;
+    } else if (type == binary_sensor_type::FAULT) {
+      state = data.power.is_input_out_of_range() ||
+              data.battery.status.find("Fault") != std::string::npos ||
+              data.battery.status.find("Replace Battery") != std::string::npos ||
+              data.battery.status.find("Internal Failure") != std::string::npos;
     }
     
     sensor->publish_state(state);

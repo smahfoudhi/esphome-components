@@ -1,0 +1,266 @@
+sensor:
+  - platform: ups_hid
+    ups_hid_id: ups_monitor
+    name: "Battery Level"
+    id: battery_level
+    type: battery_level
+    unit_of_measurement: "%"
+    device_class: battery
+    state_class: measurement
+    accuracy_decimals: 0
+
+  - platform: ups_hid
+    ups_hid_id: ups_monitor
+    name: "Input Voltage"
+    id: input_voltage
+    type: input_voltage
+    unit_of_measurement: "V"
+    device_class: voltage
+    state_class: measurement
+    accuracy_decimals: 1
+
+  - platform: ups_hid
+    ups_hid_id: ups_monitor
+    name: "Load Percentage"
+    id: load_percentage
+    type: load_percent
+    unit_of_measurement: "%"
+    device_class: power_factor
+    state_class: measurement
+    accuracy_decimals: 0
+
+  - platform: ups_hid
+    ups_hid_id: ups_monitor
+    name: "Battery Voltage"
+    id: battery_voltage
+    type: battery_voltage
+    unit_of_measurement: "V"
+    device_class: voltage
+    state_class: measurement
+    accuracy_decimals: 1
+
+  - platform: ups_hid
+    ups_hid_id: ups_monitor
+    name: "Battery Voltage Nominal"
+    id: battery_voltage_nominal
+    type: battery_voltage_nominal
+    unit_of_measurement: "V"
+    device_class: voltage
+    state_class: measurement
+    accuracy_decimals: 0
+
+  - platform: ups_hid
+    ups_hid_id: ups_monitor
+    name: "Input Transfer Low"
+    id: input_transfer_low
+    type: input_transfer_low
+    unit_of_measurement: "V"
+    device_class: voltage
+    state_class: measurement
+    accuracy_decimals: 0
+
+  - platform: ups_hid
+    ups_hid_id: ups_monitor
+    name: "Input Transfer High"
+    id: input_transfer_high
+    type: input_transfer_high
+    unit_of_measurement: "V"
+    device_class: voltage
+    state_class: measurement
+    accuracy_decimals: 0
+
+  - platform: ups_hid
+    ups_hid_id: ups_monitor
+    name: "Estimated Runtime"
+    id: estimated_runtime
+    type: runtime
+    unit_of_measurement: "min"
+    device_class: duration
+    state_class: measurement
+    accuracy_decimals: 0
+
+  - platform: ups_hid
+    ups_hid_id: ups_monitor
+    name: "Battery Runtime Low Threshold"
+    id: battery_runtime_low
+    type: battery_runtime_low
+    unit_of_measurement: "min"
+    device_class: duration
+    state_class: measurement
+    accuracy_decimals: 0
+
+  - platform: ups_hid
+    ups_hid_id: ups_monitor
+    name: "Input Frequency"
+    id: input_frequency
+    type: frequency
+    unit_of_measurement: "Hz"
+    state_class: measurement
+    accuracy_decimals: 1
+
+  - platform: template
+    name: "Estimated Runtime"
+    id: estimated_runtime
+    unit_of_measurement: "min"
+    device_class: duration
+    state_class: measurement
+    accuracy_decimals: 0
+    update_interval: 30s
+    lambda: |-
+      const float level = id(battery_level).state;
+      if (std::isnan(level) || level < 0.0f) {
+        return NAN;
+      }
+      return level * 0.5f;
+
+  - platform: uptime
+    name: "Uptime"
+    id: uptime_sensor
+    update_interval: 60s
+    entity_category: diagnostic
+
+  - platform: wifi_signal
+    name: "WiFi Signal"
+    id: wifi_signal_sensor
+    update_interval: 60s
+    entity_category: diagnostic
+
+text_sensor:
+  - platform: ups_hid
+    ups_hid_id: ups_monitor
+    name: "UPS Status"
+    id: ups_status
+    type: status
+
+  - platform: ups_hid
+    ups_hid_id: ups_monitor
+    name: "UPS Status Code"
+    type: status_code
+
+  - platform: ups_hid
+    ups_hid_id: ups_monitor
+    name: "Detected UPS Protocol"
+    type: protocol
+
+  - platform: ups_hid
+    ups_hid_id: ups_monitor
+    name: "UPS Manufacturer"
+    id: ups_manufacturer
+    type: manufacturer
+
+  - platform: ups_hid
+    ups_hid_id: ups_monitor
+    name: "UPS Model"
+    id: ups_model
+    type: model
+
+  - platform: ups_hid
+    ups_hid_id: ups_monitor
+    name: "UPS Serial Number"
+    type: serial_number
+
+  - platform: ups_hid
+    ups_hid_id: ups_monitor
+    name: "UPS Beeper Status"
+    type: ups_beeper_status
+
+  - platform: ups_hid
+    ups_hid_id: ups_monitor
+    name: "Input Sensitivity"
+    type: input_sensitivity
+
+  - platform: ups_hid
+    ups_hid_id: ups_monitor
+    name: "Battery Status"
+    type: battery_status
+
+  - platform: ups_hid
+    ups_hid_id: ups_monitor
+    name: "UPS Test Result"
+    type: ups_test_result
+
+  - platform: wifi_info
+    ip_address:
+      name: "IP Address"
+      entity_category: diagnostic
+
+  - platform: version
+    name: "ESPHome Version"
+    entity_category: diagnostic
+
+binary_sensor:
+  - platform: ups_hid
+    ups_hid_id: ups_monitor
+    name: "UPS Online"
+    type: online
+
+  - platform: ups_hid
+    ups_hid_id: ups_monitor
+    name: "On Battery"
+    type: on_battery
+
+  - platform: ups_hid
+    ups_hid_id: ups_monitor
+    name: "Low Battery"
+    type: low_battery
+
+  - platform: ups_hid
+    ups_hid_id: ups_monitor
+    name: "UPS Fault"
+    type: fault
+
+  - platform: ups_hid
+    ups_hid_id: ups_monitor
+    name: "Battery Charging"
+    type: charging
+
+  - platform: ups_hid
+    ups_hid_id: ups_monitor
+    name: "UPS Overload"
+    type: overload
+
+button:
+  - platform: ups_hid
+    ups_hid_id: ups_monitor
+    name: "UPS Beeper Enable"
+    beeper_action: enable
+
+  - platform: ups_hid
+    ups_hid_id: ups_monitor
+    name: "UPS Beeper Disable"
+    beeper_action: disable
+
+  - platform: ups_hid
+    ups_hid_id: ups_monitor
+    name: "UPS Beeper Mute"
+    beeper_action: mute
+
+  - platform: ups_hid
+    ups_hid_id: ups_monitor
+    name: "UPS Beeper Test"
+    beeper_action: test
+
+  - platform: ups_hid
+    ups_hid_id: ups_monitor
+    name: "UPS Quick Battery Test"
+    test_action: battery_quick
+
+  - platform: ups_hid
+    ups_hid_id: ups_monitor
+    name: "UPS Deep Battery Test"
+    test_action: battery_deep
+
+  - platform: ups_hid
+    ups_hid_id: ups_monitor
+    name: "UPS Stop Battery Test"
+    test_action: battery_stop
+
+  - platform: ups_hid
+    ups_hid_id: ups_monitor
+    name: "UPS Panel Test"
+    test_action: ups_test
+
+  - platform: ups_hid
+    ups_hid_id: ups_monitor
+    name: "UPS Stop Panel Test"
+    test_action: ups_stop

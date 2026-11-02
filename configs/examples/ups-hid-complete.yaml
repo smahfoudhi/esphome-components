@@ -23,12 +23,7 @@ packages:
     ref: main
     refresh: 1d
     files:
-      - configs/essential_sensors.yaml
-      - configs/extended_sensors.yaml
-      - configs/timer_sensors.yaml
-      - configs/ups_controls.yaml
-      - configs/delay_config.yaml
-      - configs/ups_status_sensors.yaml
+      - configs/device_types/apc_bx750mi.yaml
 
 logger:
   level: INFO

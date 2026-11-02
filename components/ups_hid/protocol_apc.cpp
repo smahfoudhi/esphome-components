@@ -211,6 +211,12 @@ bool ApcHidProtocol::read_data(UpsData &data) {
   } else {
     ESP_LOGV(APC_HID_TAG, "Failed to read load report");
   }
+
+  if (!std::isnan(data.battery.level) && std::isnan(data.battery.runtime_minutes)) {
+    data.battery.runtime_minutes = data.battery.level * 0.5f;
+    ESP_LOGD(APC_HID_TAG, "Runtime unavailable; using rough estimate: %.0f minutes",
+             data.battery.runtime_minutes);
+  }
   
   // 6. Skip legacy output voltage report (0x09) on this APC class.
   // It commonly returns short payloads and adds unnecessary USB load.
