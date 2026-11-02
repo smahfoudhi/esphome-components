@@ -1,0 +1,54 @@
+substitutions:
+  name: "ups-hid-monitor"
+  friendly_name: "UPS HID Monitor"
+  update_interval: 10s
+
+esphome:
+  name: ${name}
+  friendly_name: ${friendly_name}
+  comment: "ESP32-S3 UPS monitor using USB HID"
+
+esp32:
+  board: esp32-s3-devkitc-1
+  framework:
+    type: esp-idf
+
+external_components:
+  - source: github://bullshit/esphome-components@main
+    components: [ups_hid]
+
+packages:
+  ups_hid_configuration:
+    url: https://github.com/bullshit/esphome-components
+    ref: main
+    refresh: 1d
+    files:
+      - configs/essential_sensors.yaml
+      - configs/extended_sensors.yaml
+      - configs/timer_sensors.yaml
+      - configs/ups_controls.yaml
+      - configs/delay_config.yaml
+      - configs/ups_status_sensors.yaml
+
+logger:
+  level: INFO
+  logs:
+    ups_hid: INFO
+
+wifi:
+  ssid: !secret wifi_ssid
+  password: !secret wifi_password
+
+api:
+
+ota:
+  - platform: esphome
+    password: !secret ota_password
+
+ups_hid:
+  id: ups_monitor
+  update_interval: ${update_interval}
+  protocol_timeout: 15s
+  protocol: auto
+  fallback_nominal_voltage: 230V
+  simulation_mode: false

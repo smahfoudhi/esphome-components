@@ -1,0 +1,37 @@
+binary_sensor:
+  - platform: ups_hid
+    ups_hid_id: ups_monitor
+    name: "UPS Online"
+    type: online
+
+  - platform: ups_hid
+    ups_hid_id: ups_monitor
+    name: "On Battery"
+    type: on_battery
+
+  - platform: ups_hid
+    ups_hid_id: ups_monitor
+    name: "Low Battery"
+    type: low_battery
+
+  - platform: ups_hid
+    ups_hid_id: ups_monitor
+    name: "UPS Fault"
+    type: fault
+
+text_sensor:
+  - platform: ups_hid
+    ups_hid_id: ups_monitor
+    name: "UPS Status"
+    id: ups_status
+    type: status
+
+  - platform: ups_hid
+    ups_hid_id: ups_monitor
+    name: "UPS Status Code"
+    type: status_code
+
+  - platform: ups_hid
+    ups_hid_id: ups_monitor
+    name: "Detected UPS Protocol"
+    type: protocol
