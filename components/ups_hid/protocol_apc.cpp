@@ -401,7 +401,7 @@ bool ApcHidProtocol::read_hid_report(uint8_t report_id, HidReport &report) {
   // CRITICAL FIX: Try Input Report first (HID_REPORT_TYPE_INPUT) - this is what NUT uses for real-time data
   // Based on NUT logs showing PowerSummary fields work with Input Reports
   ESP_LOGV(APC_HID_TAG, "Trying Input report 0x%02X...", report_id);
-  ret = parent_->hid_get_report(HID_REPORT_TYPE_INPUT, report_id, buffer, &buffer_len, parent_->get_protocol_timeout());
+  ret = parent_->hid_get_report(HID_REPORT_TYPE_INPUT, report_id, buffer, &buffer_len, timing::DEFAULT_HID_TIMEOUT_MS);
   if (ret == ESP_OK && buffer_len > 0) {
     report.report_id = report_id;
     report.data.assign(buffer, buffer + buffer_len);
@@ -419,7 +419,7 @@ bool ApcHidProtocol::read_hid_report(uint8_t report_id, HidReport &report) {
   // Fall back to Feature Report (HID_REPORT_TYPE_FEATURE) for static/config data
   buffer_len = sizeof(buffer); // Reset buffer length
   ESP_LOGV(APC_HID_TAG, "Trying Feature report 0x%02X...", report_id);
-  ret = parent_->hid_get_report(HID_REPORT_TYPE_FEATURE, report_id, buffer, &buffer_len, parent_->get_protocol_timeout());
+  ret = parent_->hid_get_report(HID_REPORT_TYPE_FEATURE, report_id, buffer, &buffer_len, timing::DEFAULT_HID_TIMEOUT_MS);
   if (ret == ESP_OK && buffer_len > 0) {
     report.report_id = report_id;
     report.data.assign(buffer, buffer + buffer_len);
