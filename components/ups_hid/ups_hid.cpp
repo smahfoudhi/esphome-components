@@ -314,7 +314,11 @@ bool UpsHidComponent::read_ups_data() {
 }
 
 void UpsHidComponent::update_sensors() {
-  std::lock_guard<std::mutex> lock(data_mutex_);
+  UpsData data;
+  {
+    std::lock_guard<std::mutex> lock(data_mutex_);
+    data = ups_data_;
+  }
   
   // Check if any sensors are registered - if not, skip sensor updates
   size_t total_sensors = 0;
@@ -345,44 +349,44 @@ void UpsHidComponent::update_sensors() {
     // Extract appropriate value based on sensor type
     float value = NAN;
     
-    if (type == sensor_type::BATTERY_LEVEL && ups_data_.battery.is_valid()) {
-      value = ups_data_.battery.level;
-    } else if (type == sensor_type::BATTERY_VOLTAGE && !std::isnan(ups_data_.battery.voltage)) {
-      value = ups_data_.battery.voltage;
-    } else if (type == sensor_type::BATTERY_VOLTAGE_NOMINAL && !std::isnan(ups_data_.battery.voltage_nominal)) {
-      value = ups_data_.battery.voltage_nominal;
-    } else if (type == sensor_type::RUNTIME && !std::isnan(ups_data_.battery.runtime_minutes)) {
-      value = ups_data_.battery.runtime_minutes;
-    } else if (type == sensor_type::INPUT_VOLTAGE && !std::isnan(ups_data_.power.input_voltage)) {
-      value = ups_data_.power.input_voltage;
-    } else if (type == sensor_type::INPUT_VOLTAGE_NOMINAL && !std::isnan(ups_data_.power.input_voltage_nominal)) {
-      value = ups_data_.power.input_voltage_nominal;
-    } else if (type == sensor_type::OUTPUT_VOLTAGE && !std::isnan(ups_data_.power.output_voltage)) {
-      value = ups_data_.power.output_voltage;
-    } else if (type == sensor_type::LOAD_PERCENT && !std::isnan(ups_data_.power.load_percent)) {
-      value = ups_data_.power.load_percent;
-    } else if (type == sensor_type::FREQUENCY && !std::isnan(ups_data_.power.frequency)) {
-      value = ups_data_.power.frequency;
-    } else if (type == sensor_type::INPUT_TRANSFER_LOW && !std::isnan(ups_data_.power.input_transfer_low)) {
-      value = ups_data_.power.input_transfer_low;
-    } else if (type == sensor_type::INPUT_TRANSFER_HIGH && !std::isnan(ups_data_.power.input_transfer_high)) {
-      value = ups_data_.power.input_transfer_high;
-    } else if (type == sensor_type::BATTERY_RUNTIME_LOW && !std::isnan(ups_data_.battery.runtime_low)) {
-      value = ups_data_.battery.runtime_low;
-    } else if (type == sensor_type::UPS_REALPOWER_NOMINAL && !std::isnan(ups_data_.power.realpower_nominal)) {
-      value = ups_data_.power.realpower_nominal;
-    } else if (type == sensor_type::UPS_DELAY_SHUTDOWN && !std::isnan(ups_data_.config.delay_shutdown)) {
-      value = ups_data_.config.delay_shutdown;
-    } else if (type == sensor_type::UPS_DELAY_START && !std::isnan(ups_data_.config.delay_start)) {
-      value = ups_data_.config.delay_start;
-    } else if (type == sensor_type::UPS_DELAY_REBOOT && !std::isnan(ups_data_.config.delay_reboot)) {
-      value = ups_data_.config.delay_reboot;
-    } else if (type == sensor_type::UPS_TIMER_REBOOT && ups_data_.test.timer_reboot != -1) {
-      value = ups_data_.test.timer_reboot;
-    } else if (type == sensor_type::UPS_TIMER_SHUTDOWN && ups_data_.test.timer_shutdown != -1) {
-      value = ups_data_.test.timer_shutdown;
-    } else if (type == sensor_type::UPS_TIMER_START && ups_data_.test.timer_start != -1) {
-      value = ups_data_.test.timer_start;
+    if (type == sensor_type::BATTERY_LEVEL && data.battery.is_valid()) {
+      value = data.battery.level;
+    } else if (type == sensor_type::BATTERY_VOLTAGE && !std::isnan(data.battery.voltage)) {
+      value = data.battery.voltage;
+    } else if (type == sensor_type::BATTERY_VOLTAGE_NOMINAL && !std::isnan(data.battery.voltage_nominal)) {
+      value = data.battery.voltage_nominal;
+    } else if (type == sensor_type::RUNTIME && !std::isnan(data.battery.runtime_minutes)) {
+      value = data.battery.runtime_minutes;
+    } else if (type == sensor_type::INPUT_VOLTAGE && !std::isnan(data.power.input_voltage)) {
+      value = data.power.input_voltage;
+    } else if (type == sensor_type::INPUT_VOLTAGE_NOMINAL && !std::isnan(data.power.input_voltage_nominal)) {
+      value = data.power.input_voltage_nominal;
+    } else if (type == sensor_type::OUTPUT_VOLTAGE && !std::isnan(data.power.output_voltage)) {
+      value = data.power.output_voltage;
+    } else if (type == sensor_type::LOAD_PERCENT && !std::isnan(data.power.load_percent)) {
+      value = data.power.load_percent;
+    } else if (type == sensor_type::FREQUENCY && !std::isnan(data.power.frequency)) {
+      value = data.power.frequency;
+    } else if (type == sensor_type::INPUT_TRANSFER_LOW && !std::isnan(data.power.input_transfer_low)) {
+      value = data.power.input_transfer_low;
+    } else if (type == sensor_type::INPUT_TRANSFER_HIGH && !std::isnan(data.power.input_transfer_high)) {
+      value = data.power.input_transfer_high;
+    } else if (type == sensor_type::BATTERY_RUNTIME_LOW && !std::isnan(data.battery.runtime_low)) {
+      value = data.battery.runtime_low;
+    } else if (type == sensor_type::UPS_REALPOWER_NOMINAL && !std::isnan(data.power.realpower_nominal)) {
+      value = data.power.realpower_nominal;
+    } else if (type == sensor_type::UPS_DELAY_SHUTDOWN && !std::isnan(data.config.delay_shutdown)) {
+      value = data.config.delay_shutdown;
+    } else if (type == sensor_type::UPS_DELAY_START && !std::isnan(data.config.delay_start)) {
+      value = data.config.delay_start;
+    } else if (type == sensor_type::UPS_DELAY_REBOOT && !std::isnan(data.config.delay_reboot)) {
+      value = data.config.delay_reboot;
+    } else if (type == sensor_type::UPS_TIMER_REBOOT && data.test.timer_reboot != -1) {
+      value = data.test.timer_reboot;
+    } else if (type == sensor_type::UPS_TIMER_SHUTDOWN && data.test.timer_shutdown != -1) {
+      value = data.test.timer_shutdown;
+    } else if (type == sensor_type::UPS_TIMER_START && data.test.timer_start != -1) {
+      value = data.test.timer_start;
     }
     
     if (!std::isnan(value)) {
@@ -399,12 +403,12 @@ void UpsHidComponent::update_sensors() {
     
     bool state = false;
     
-    if (type == binary_sensor_type::ONLINE && ups_data_.power.input_voltage_valid()) {
+    if (type == binary_sensor_type::ONLINE && data.power.input_voltage_valid()) {
       state = true;
-    } else if (type == binary_sensor_type::ON_BATTERY && ups_data_.power.input_voltage_valid()) {
+    } else if (type == binary_sensor_type::ON_BATTERY && data.power.input_voltage_valid()) {
       state = false; // Opposite of online
     } else if (type == binary_sensor_type::LOW_BATTERY) {
-      state = ups_data_.battery.is_low();
+      state = data.battery.is_low();
     }
     
     sensor->publish_state(state);
@@ -419,36 +423,36 @@ void UpsHidComponent::update_sensors() {
     
     std::string value = "";
     
-    if (type == text_sensor_type::MODEL && !ups_data_.device.model.empty()) {
-      value = ups_data_.device.model;
-    } else if (type == text_sensor_type::MANUFACTURER && !ups_data_.device.manufacturer.empty()) {
-      value = ups_data_.device.manufacturer;
+    if (type == text_sensor_type::MODEL && !data.device.model.empty()) {
+      value = data.device.model;
+    } else if (type == text_sensor_type::MANUFACTURER && !data.device.manufacturer.empty()) {
+      value = data.device.manufacturer;
     } else if (type == text_sensor_type::STATUS_CODE) {
       value = get_nut_status_code();
-    } else if (type == text_sensor_type::SERIAL_NUMBER && !ups_data_.device.serial_number.empty()) {
-      value = ups_data_.device.serial_number;
-    } else if (type == text_sensor_type::FIRMWARE_VERSION && !ups_data_.device.firmware_version.empty()) {
-      value = ups_data_.device.firmware_version;
-    } else if (type == text_sensor_type::BATTERY_STATUS && !ups_data_.battery.status.empty()) {
-      value = ups_data_.battery.status;
-    } else if (type == text_sensor_type::UPS_TEST_RESULT && !ups_data_.test.ups_test_result.empty()) {
-      value = ups_data_.test.ups_test_result;
-    } else if (type == text_sensor_type::UPS_BEEPER_STATUS && !ups_data_.config.beeper_status.empty()) {
-      value = ups_data_.config.beeper_status;
-    } else if (type == text_sensor_type::INPUT_SENSITIVITY && !ups_data_.config.input_sensitivity.empty()) {
-      value = ups_data_.config.input_sensitivity;
+    } else if (type == text_sensor_type::SERIAL_NUMBER && !data.device.serial_number.empty()) {
+      value = data.device.serial_number;
+    } else if (type == text_sensor_type::FIRMWARE_VERSION && !data.device.firmware_version.empty()) {
+      value = data.device.firmware_version;
+    } else if (type == text_sensor_type::BATTERY_STATUS && !data.battery.status.empty()) {
+      value = data.battery.status;
+    } else if (type == text_sensor_type::UPS_TEST_RESULT && !data.test.ups_test_result.empty()) {
+      value = data.test.ups_test_result;
+    } else if (type == text_sensor_type::UPS_BEEPER_STATUS && !data.config.beeper_status.empty()) {
+      value = data.config.beeper_status;
+    } else if (type == text_sensor_type::INPUT_SENSITIVITY && !data.config.input_sensitivity.empty()) {
+      value = data.config.input_sensitivity;
     } else if (type == text_sensor_type::STATUS) {
-      value = ups_data_.power.status.empty() ? status::UNKNOWN : ups_data_.power.status;
+      value = data.power.status.empty() ? status::UNKNOWN : data.power.status;
     } else if (type == text_sensor_type::PROTOCOL) {
       value = get_protocol_name();
-    } else if (type == text_sensor_type::BATTERY_MFR_DATE && !ups_data_.battery.mfr_date.empty()) {
-      value = ups_data_.battery.mfr_date;
-    } else if (type == text_sensor_type::UPS_MFR_DATE && !ups_data_.device.mfr_date.empty()) {
-      value = ups_data_.device.mfr_date;
-    } else if (type == text_sensor_type::BATTERY_TYPE && !ups_data_.battery.type.empty()) {
-      value = ups_data_.battery.type;
-    } else if (type == text_sensor_type::UPS_FIRMWARE_AUX && !ups_data_.device.firmware_aux.empty()) {
-      value = ups_data_.device.firmware_aux;
+    } else if (type == text_sensor_type::BATTERY_MFR_DATE && !data.battery.mfr_date.empty()) {
+      value = data.battery.mfr_date;
+    } else if (type == text_sensor_type::UPS_MFR_DATE && !data.device.mfr_date.empty()) {
+      value = data.device.mfr_date;
+    } else if (type == text_sensor_type::BATTERY_TYPE && !data.battery.type.empty()) {
+      value = data.battery.type;
+    } else if (type == text_sensor_type::UPS_FIRMWARE_AUX && !data.device.firmware_aux.empty()) {
+      value = data.device.firmware_aux;
     }
     
     bool must_publish = (type == text_sensor_type::STATUS || type == text_sensor_type::STATUS_CODE);
