@@ -98,21 +98,6 @@ sensor:
     state_class: measurement
     accuracy_decimals: 1
 
-  - platform: template
-    name: "Estimated Runtime"
-    id: estimated_runtime
-    unit_of_measurement: "min"
-    device_class: duration
-    state_class: measurement
-    accuracy_decimals: 0
-    update_interval: 30s
-    lambda: |-
-      const float level = id(battery_level).state;
-      if (std::isnan(level) || level < 0.0f) {
-        return NAN;
-      }
-      return level * 0.5f;
-
   - platform: uptime
     name: "Uptime"
     id: uptime_sensor
