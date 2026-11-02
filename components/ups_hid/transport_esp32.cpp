@@ -2,6 +2,7 @@
 #include "constants_ups.h"
 #include "esphome/core/log.h"
 #include "esphome/core/helpers.h"
+#include "esp_system.h"
 #include <algorithm>
 #include <cstring>
 #include <new>
@@ -19,6 +20,10 @@ static constexpr uint8_t XFER_ABANDONED = 2;
 static constexpr uint32_t LINK_RECOVERY_DELAY_MS = 2000;
 static constexpr uint32_t LINK_RECOVERY_RETRY_MS = 30000;
 static constexpr uint32_t PORT_POWER_ON_RETRY_MS = 500;
+static constexpr uint32_t REENUMERATION_TIMEOUT_MS = 15000;
+static constexpr uint8_t RECOVERY_NONE = 0;
+static constexpr uint8_t RECOVERY_AFTER_PORT_CYCLE = 1;
+static constexpr uint8_t RECOVERY_AFTER_REINSTALL = 2;
 
 struct Esp32UsbTransport::ControlContext {
     Esp32UsbTransport *owner;
@@ -440,6 +445,20 @@ void Esp32UsbTransport::on_abandoned_transfer_done_() {
 // Runs in the USB client task so device-gone events are handled between steps
 void Esp32UsbTransport::maybe_recover_stalled_link_() {
     const uint32_t now = xTaskGetTickCount();
+    if (recovery_stage_ != RECOVERY_NONE && !port_powered_off_ &&
+        now - recovery_stage_tick_ >= pdMS_TO_TICKS(REENUMERATION_TIMEOUT_MS)) {
+        if (recovery_stage_ == RECOVERY_AFTER_PORT_CYCLE) {
+            reinstall_usb_host_();
+            recovery_stage_ = RECOVERY_AFTER_REINSTALL;
+            recovery_stage_tick_ = xTaskGetTickCount();
+        } else {
+            ESP_LOGE(ESP32_USB_TAG, "UPS still not re-enumerated after USB host reinstall - restarting");
+            vTaskDelay(pdMS_TO_TICKS(200));
+            esp_restart();
+        }
+        return;
+    }
+    
     if (port_powered_off_) {
         if (now - port_off_tick_ < pdMS_TO_TICKS(PORT_POWER_ON_RETRY_MS)) {
             return;
@@ -448,6 +467,8 @@ void Esp32UsbTransport::maybe_recover_stalled_link_() {
         esp_err_t ret = usb_host_lib_set_root_port_power(true);
         if (ret == ESP_OK) {
             port_powered_off_ = false;
+            recovery_stage_ = RECOVERY_AFTER_PORT_CYCLE;
+            recovery_stage_tick_ = now;
             ESP_LOGI(ESP32_USB_TAG, "USB port powered on again");
         } else {
             port_off_tick_ = now;
@@ -480,6 +501,62 @@ void Esp32UsbTransport::maybe_recover_stalled_link_() {
     port_powered_off_ = true;
     port_off_tick_ = now;
     port_on_attempts_ = 0;
+}
+
+// Runs in the USB client task, which keeps running across the reinstall
+void Esp32UsbTransport::reinstall_usb_host_() {
+    ESP_LOGW(ESP32_USB_TAG, "UPS not re-enumerated - reinstalling USB host stack");
+    
+    {
+        std::lock_guard<std::mutex> lock(device_mutex_);
+        connected_ = false;
+        if (device_.dev_hdl != nullptr) {
+            usb_host_interface_release(device_.client_hdl, device_.dev_hdl, device_.interface_num);
+            usb_host_device_close(device_.client_hdl, device_.dev_hdl);
+            device_.dev_hdl = nullptr;
+        }
+        if (pending_close_hdl_ != nullptr) {
+            usb_host_interface_release(device_.client_hdl, pending_close_hdl_, device_.interface_num);
+            usb_host_device_close(device_.client_hdl, pending_close_hdl_);
+            pending_close_hdl_ = nullptr;
+        }
+    }
+    
+    if (device_.client_hdl != nullptr) {
+        esp_err_t ret = usb_host_client_deregister(device_.client_hdl);
+        if (ret != ESP_OK) {
+            ESP_LOGE(ESP32_USB_TAG, "USB client deregister failed (%s) - restarting", esp_err_to_name(ret));
+            vTaskDelay(pdMS_TO_TICKS(200));
+            esp_restart();
+        }
+        device_.client_hdl = nullptr;
+    }
+    
+    // The library task frees all devices and uninstalls once its last client is gone
+    for (int i = 0; i < 50 && !lib_task_exited_.load(); i++) {
+        vTaskDelay(pdMS_TO_TICKS(100));
+    }
+    if (!lib_task_exited_.load()) {
+        ESP_LOGE(ESP32_USB_TAG, "USB host library did not shut down - restarting");
+        vTaskDelay(pdMS_TO_TICKS(200));
+        esp_restart();
+    }
+    lib_task_exited_ = false;
+    link_stalled_ = false;
+    abandoned_transfers_ = 0;
+    
+    if (xTaskCreate(usb_lib_task, "usb_lib_task", 4096, this, 2, &usb_lib_task_handle_) != pdTRUE) {
+        ESP_LOGE(ESP32_USB_TAG, "Failed to recreate USB host library task - restarting");
+        vTaskDelay(pdMS_TO_TICKS(200));
+        esp_restart();
+    }
+    vTaskDelay(pdMS_TO_TICKS(100));
+    if (!usb_tasks_running_.load() || find_and_open_device() != ESP_OK) {
+        ESP_LOGE(ESP32_USB_TAG, "USB host reinstall failed - restarting");
+        vTaskDelay(pdMS_TO_TICKS(200));
+        esp_restart();
+    }
+    ESP_LOGI(ESP32_USB_TAG, "USB host stack reinstalled, waiting for the UPS");
 }
 
 std::string Esp32UsbTransport::get_last_error() const {
@@ -823,6 +900,7 @@ void Esp32UsbTransport::handle_new_device(uint8_t dev_addr) {
                 ret = find_endpoints();
                 if (ret == ESP_OK) {
                     link_stalled_ = false;
+                    recovery_stage_ = RECOVERY_NONE;
                     connected_ = true;
                     ESP_LOGI(ESP32_USB_TAG, "UPS device successfully configured and ready");
                     return;
@@ -881,6 +959,7 @@ void Esp32UsbTransport::usb_lib_task(void* arg) {
     if (ret != ESP_OK) {
         ESP_LOGE(ESP32_USB_TAG, "USB Host install failed: %s", esp_err_to_name(ret));
         transport->usb_tasks_running_ = false; // Stop other tasks
+        transport->lib_task_exited_ = true;
         vTaskDelete(nullptr);
         return;
     }
@@ -923,6 +1002,7 @@ void Esp32UsbTransport::usb_lib_task(void* arg) {
     usb_host_uninstall();
     
     ESP_LOGI(ESP32_USB_TAG, "USB Host Library task ending");
+    transport->lib_task_exited_ = true;
     vTaskDelete(nullptr);
 }
 
