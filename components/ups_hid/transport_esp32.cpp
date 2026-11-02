@@ -4,6 +4,7 @@
 #include "esphome/core/helpers.h"
 #include "esp_system.h"
 #include <algorithm>
+#include <cstdio>
 #include <cstring>
 #include <new>
 
@@ -432,14 +433,81 @@ void Esp32UsbTransport::on_abandoned_transfer_done_() {
     if (abandoned_transfers_.fetch_sub(1) != 1) {
         return;
     }
-    if (pending_close_hdl_ != nullptr) {
-        usb_host_interface_release(device_.client_hdl, pending_close_hdl_, device_.interface_num);
-        usb_host_device_close(device_.client_hdl, pending_close_hdl_);
-        pending_close_hdl_ = nullptr;
-    }
+    finish_pending_close_();
     if (link_stalled_.exchange(false)) {
         ESP_LOGI(ESP32_USB_TAG, "USB control link recovered");
     }
+}
+
+void Esp32UsbTransport::finish_pending_close_() {
+    if (pending_close_hdl_ == nullptr || abandoned_transfers_.load() > 0 || intr_transfer_ != nullptr) {
+        return;
+    }
+    usb_host_interface_release(device_.client_hdl, pending_close_hdl_, device_.interface_num);
+    usb_host_device_close(device_.client_hdl, pending_close_hdl_);
+    pending_close_hdl_ = nullptr;
+}
+
+void Esp32UsbTransport::start_interrupt_in_() {
+    if (intr_transfer_ != nullptr || device_.ep_in == 0 || device_.max_packet_size_in == 0) {
+        return;
+    }
+    usb_transfer_t *transfer = nullptr;
+    esp_err_t ret = usb_host_transfer_alloc(device_.max_packet_size_in, 0, &transfer);
+    if (ret != ESP_OK) {
+        ESP_LOGW(ESP32_USB_TAG, "Interrupt IN alloc failed: %s", esp_err_to_name(ret));
+        return;
+    }
+    transfer->device_handle = device_.dev_hdl;
+    transfer->bEndpointAddress = device_.ep_in;
+    transfer->num_bytes = device_.max_packet_size_in;
+    transfer->callback = interrupt_in_cb_;
+    transfer->context = this;
+    
+    intr_active_ = true;
+    ret = usb_host_transfer_submit(transfer);
+    if (ret != ESP_OK) {
+        intr_active_ = false;
+        usb_host_transfer_free(transfer);
+        ESP_LOGW(ESP32_USB_TAG, "Interrupt IN submit failed: %s", esp_err_to_name(ret));
+        return;
+    }
+    intr_transfer_ = transfer;
+    ESP_LOGI(ESP32_USB_TAG, "Polling interrupt IN endpoint 0x%02X", device_.ep_in);
+}
+
+// Runs in the USB client task
+void Esp32UsbTransport::interrupt_in_cb_(usb_transfer_t *transfer) {
+    auto *self = static_cast<Esp32UsbTransport *>(transfer->context);
+    
+    if (transfer->status == USB_TRANSFER_STATUS_COMPLETED) {
+        if (transfer->actual_num_bytes > 0) {
+            self->intr_report_count_++;
+            char hex[3 * 64 + 1] = {0};
+            size_t len = std::min<size_t>(transfer->actual_num_bytes, 64);
+            for (size_t i = 0; i < len; i++) {
+                snprintf(hex + i * 3, 4, "%02X ", transfer->data_buffer[i]);
+            }
+            ESP_LOGD(ESP32_USB_TAG, "Interrupt IN report #%u (%u bytes): %s",
+                     static_cast<unsigned>(self->intr_report_count_),
+                     static_cast<unsigned>(transfer->actual_num_bytes), hex);
+        }
+        if (self->intr_active_ && transfer->device_handle == self->device_.dev_hdl) {
+            esp_err_t ret = usb_host_transfer_submit(transfer);
+            if (ret == ESP_OK) {
+                return;
+            }
+            ESP_LOGW(ESP32_USB_TAG, "Interrupt IN resubmit failed: %s", esp_err_to_name(ret));
+        }
+    } else {
+        ESP_LOGD(ESP32_USB_TAG, "Interrupt IN polling stopped (status %d)", transfer->status);
+    }
+    
+    if (self->intr_transfer_ == transfer) {
+        self->intr_transfer_ = nullptr;
+    }
+    usb_host_transfer_free(transfer);
+    self->finish_pending_close_();
 }
 
 // Runs in the USB client task so device-gone events are handled between steps
@@ -903,6 +971,7 @@ void Esp32UsbTransport::handle_new_device(uint8_t dev_addr) {
                     recovery_stage_ = RECOVERY_NONE;
                     connected_ = true;
                     ESP_LOGI(ESP32_USB_TAG, "UPS device successfully configured and ready");
+                    start_interrupt_in_();
                     return;
                 }
             }
@@ -926,9 +995,10 @@ void Esp32UsbTransport::handle_device_gone(usb_device_handle_t dev_hdl) {
         
         // Clean up device resources
         if (device_.dev_hdl) {
+            intr_active_ = false;
             usb_host_interface_release(device_.client_hdl, device_.dev_hdl, device_.interface_num);
             if (usb_host_device_close(device_.client_hdl, device_.dev_hdl) != ESP_OK &&
-                abandoned_transfers_.load() > 0) {
+                (abandoned_transfers_.load() > 0 || intr_transfer_ != nullptr)) {
                 // Closed once its abandoned transfers have been returned
                 pending_close_hdl_ = device_.dev_hdl;
             }

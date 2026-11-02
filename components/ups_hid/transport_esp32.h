@@ -90,6 +90,9 @@ private:
     uint8_t recovery_stage_{0};
     uint32_t recovery_stage_tick_{0};
     std::atomic<bool> lib_task_exited_{false};
+    usb_transfer_t *intr_transfer_{nullptr};
+    bool intr_active_{false};
+    uint32_t intr_report_count_{0};
     
     static void control_transfer_cb_(usb_transfer_t *transfer);
     esp_err_t run_control_transfer_(usb_transfer_t *transfer, uint32_t timeout_ms,
@@ -97,6 +100,9 @@ private:
     void on_abandoned_transfer_done_();
     void maybe_recover_stalled_link_();
     void reinstall_usb_host_();
+    void start_interrupt_in_();
+    static void interrupt_in_cb_(usb_transfer_t *transfer);
+    void finish_pending_close_();
     
     // Private methods
     static void usb_lib_task(void* arg);
