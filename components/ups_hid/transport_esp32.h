@@ -10,6 +10,8 @@
 #include "freertos/task.h"
 #include <mutex>
 #include <set>
+#include <map>
+#include <vector>
 #include <atomic>
 
 namespace esphome {
@@ -46,6 +48,9 @@ public:
                                   std::string& result) override;
     
     std::string get_last_error() const override;
+    
+    bool get_interrupt_report(uint8_t report_id, std::vector<uint8_t> &data,
+                              uint32_t max_age_ms) const override;
 
 private:
     // USB device structure
@@ -95,6 +100,12 @@ private:
     uint32_t intr_report_count_{0};
     uint32_t intr_window_count_{0};
     uint32_t intr_window_tick_{0};
+    struct InterruptReport {
+        std::vector<uint8_t> data;
+        uint32_t tick{0};
+    };
+    mutable std::mutex intr_mutex_;
+    std::map<uint8_t, InterruptReport> intr_reports_;
     
     static void control_transfer_cb_(usb_transfer_t *transfer);
     esp_err_t run_control_transfer_(usb_transfer_t *transfer, uint32_t timeout_ms,

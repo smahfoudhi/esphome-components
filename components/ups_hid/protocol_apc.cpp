@@ -168,6 +168,12 @@ bool ApcHidProtocol::initialize() {
 bool ApcHidProtocol::read_data(UpsData &data) {
   ESP_LOGV(APC_HID_TAG, "Reading APC HID UPS data...");
   
+  if (has_full_data_ && millis() - last_full_read_ms_ < FULL_READ_INTERVAL_MS &&
+      read_from_interrupt_reports_(data)) {
+    return true;
+  }
+  runtime_estimated_ = false;
+  
   bool success = false;
   
   // CRITICAL FIX: Read NUT-compatible reports in the correct order first
@@ -214,6 +220,7 @@ bool ApcHidProtocol::read_data(UpsData &data) {
 
   if (!std::isnan(data.battery.level) && std::isnan(data.battery.runtime_minutes)) {
     data.battery.runtime_minutes = data.battery.level * 0.5f;
+    runtime_estimated_ = true;
     ESP_LOGD(APC_HID_TAG, "Runtime unavailable; using rough estimate: %.0f minutes",
              data.battery.runtime_minutes);
   }
@@ -339,7 +346,52 @@ bool ApcHidProtocol::read_data(UpsData &data) {
     data.test.ups_test_result = test::RESULT_NO_TEST;
   }
   
+  if (success && parent_->is_device_connected()) {
+    last_full_data_ = data;
+    has_full_data_ = true;
+    last_full_read_ms_ = millis();
+  }
+  
   return success;
+}
+
+bool ApcHidProtocol::read_from_interrupt_reports_(UpsData &data) {
+  std::vector<uint8_t> summary;
+  std::vector<uint8_t> present;
+  if (!parent_->get_interrupt_report(APC_REPORT_ID_POWER_SUMMARY, summary, INTERRUPT_MAX_AGE_MS) ||
+      !parent_->get_interrupt_report(APC_REPORT_ID_PRESENT_STATUS, present, INTERRUPT_MAX_AGE_MS) ||
+      summary.size() < 2 || present.size() < 2) {
+    return false;
+  }
+  
+  UpsData fresh = last_full_data_;
+  HidReport summary_report;
+  summary_report.report_id = APC_REPORT_ID_POWER_SUMMARY;
+  summary_report.data = summary;
+  parse_power_summary_report(summary_report, fresh);
+  
+  // The interrupt copy of PresentStatus has a different second byte, so only the first status byte is used
+  HidReport present_report;
+  present_report.report_id = APC_REPORT_ID_PRESENT_STATUS;
+  present_report.data.assign(present.begin(), present.begin() + 2);
+  parse_present_status_report(present_report, fresh);
+  
+  const bool was_online = last_full_data_.power.status.rfind(status::ONLINE, 0) == 0;
+  const bool is_online = fresh.power.status.rfind(status::ONLINE, 0) == 0;
+  if (was_online != is_online) {
+    ESP_LOGI(APC_HID_TAG, "Power state changed (%s), doing a full read", fresh.power.status.c_str());
+    return false;
+  }
+  if (last_full_data_.power.status.find(" - Overload") != std::string::npos) {
+    fresh.power.status += " - Overload";
+  }
+  if (runtime_estimated_ && !std::isnan(fresh.battery.level)) {
+    fresh.battery.runtime_minutes = fresh.battery.level * 0.5f;
+  }
+  
+  data = fresh;
+  ESP_LOGV(APC_HID_TAG, "Battery/status updated from interrupt reports");
+  return true;
 }
 
 void ApcHidProtocol::cache_slow_metrics_(const UpsData &data) {

@@ -216,6 +216,9 @@ namespace esphome
                              const uint8_t* data, size_t data_len,
                              uint32_t timeout_ms = 1000);
       esp_err_t get_string_descriptor(uint8_t string_index, std::string& result);
+      bool get_interrupt_report(uint8_t report_id, std::vector<uint8_t> &data, uint32_t max_age_ms) const {
+        return transport_ && transport_->get_interrupt_report(report_id, data, max_age_ms);
+      }
       
       // Transport information
       bool is_connected() const;

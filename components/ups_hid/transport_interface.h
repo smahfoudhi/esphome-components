@@ -44,6 +44,10 @@ public:
     
     // Error information
     virtual std::string get_last_error() const = 0;
+    
+    // Latest report pushed by the device on its interrupt IN endpoint, if received within max_age_ms
+    virtual bool get_interrupt_report(uint8_t report_id, std::vector<uint8_t> &data,
+                                      uint32_t max_age_ms) const { return false; }
 };
 
 // Forward declaration - implementation in usb_transport_factory.h

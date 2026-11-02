@@ -82,6 +82,15 @@ private:
   static constexpr uint8_t SLOW_POLL_INTERVAL = 6;
   SlowMetricsCache slow_metrics_cache_;
 
+  // Full HID reads are throttled; battery/status in between come from interrupt IN reports.
+  UpsData last_full_data_;
+  bool has_full_data_{false};
+  bool runtime_estimated_{false};
+  uint32_t last_full_read_ms_{0};
+  static constexpr uint32_t FULL_READ_INTERVAL_MS = 60000;
+  static constexpr uint32_t INTERRUPT_MAX_AGE_MS = 5000;
+  bool read_from_interrupt_reports_(UpsData &data);
+
   bool init_hid_communication();
   bool read_hid_report(uint8_t report_id, HidReport &report);
   bool write_hid_report(const HidReport &report);

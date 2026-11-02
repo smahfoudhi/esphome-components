@@ -21,6 +21,8 @@ static constexpr uint8_t XFER_ABANDONED = 2;
 static constexpr uint32_t LINK_RECOVERY_DELAY_MS = 2000;
 static constexpr uint32_t LINK_RECOVERY_RETRY_MS = 30000;
 static constexpr uint32_t PORT_POWER_ON_RETRY_MS = 500;
+// Bus idle time the UPS needs to recover; 0.5 s was not always enough
+static constexpr uint32_t PORT_OFF_DURATION_MS = 5000;
 static constexpr uint32_t REENUMERATION_TIMEOUT_MS = 15000;
 static constexpr uint8_t RECOVERY_NONE = 0;
 static constexpr uint8_t RECOVERY_AFTER_PORT_CYCLE = 1;
@@ -482,8 +484,15 @@ void Esp32UsbTransport::interrupt_in_cb_(usb_transfer_t *transfer) {
     
     if (transfer->status == USB_TRANSFER_STATUS_COMPLETED) {
         if (transfer->actual_num_bytes > 0) {
+            const uint32_t now = xTaskGetTickCount();
             self->intr_report_count_++;
             self->intr_window_count_++;
+            {
+                std::lock_guard<std::mutex> lock(self->intr_mutex_);
+                auto &slot = self->intr_reports_[transfer->data_buffer[0]];
+                slot.data.assign(transfer->data_buffer, transfer->data_buffer + transfer->actual_num_bytes);
+                slot.tick = now;
+            }
 #if ESPHOME_LOG_LEVEL >= ESPHOME_LOG_LEVEL_VERBOSE
             char hex[3 * 64 + 1] = {0};
             size_t len = std::min<size_t>(transfer->actual_num_bytes, 64);
@@ -494,7 +503,6 @@ void Esp32UsbTransport::interrupt_in_cb_(usb_transfer_t *transfer) {
                      static_cast<unsigned>(self->intr_report_count_),
                      static_cast<unsigned>(transfer->actual_num_bytes), hex);
 #endif
-            const uint32_t now = xTaskGetTickCount();
             if (self->intr_window_tick_ == 0) {
                 self->intr_window_tick_ = now;
             } else if (now - self->intr_window_tick_ >= pdMS_TO_TICKS(60000)) {
@@ -541,7 +549,8 @@ void Esp32UsbTransport::maybe_recover_stalled_link_() {
     }
     
     if (port_powered_off_) {
-        if (now - port_off_tick_ < pdMS_TO_TICKS(PORT_POWER_ON_RETRY_MS)) {
+        const uint32_t wait_ms = port_on_attempts_ == 0 ? PORT_OFF_DURATION_MS : PORT_POWER_ON_RETRY_MS;
+        if (now - port_off_tick_ < pdMS_TO_TICKS(wait_ms)) {
             return;
         }
         port_on_attempts_++;
@@ -643,6 +652,20 @@ void Esp32UsbTransport::reinstall_usb_host_() {
 std::string Esp32UsbTransport::get_last_error() const {
     std::lock_guard<std::mutex> lock(error_mutex_);
     return last_error_;
+}
+
+bool Esp32UsbTransport::get_interrupt_report(uint8_t report_id, std::vector<uint8_t> &data,
+                                             uint32_t max_age_ms) const {
+    if (!is_connected()) {
+        return false;
+    }
+    std::lock_guard<std::mutex> lock(intr_mutex_);
+    auto it = intr_reports_.find(report_id);
+    if (it == intr_reports_.end() || xTaskGetTickCount() - it->second.tick > pdMS_TO_TICKS(max_age_ms)) {
+        return false;
+    }
+    data = it->second.data;
+    return true;
 }
 
 // Private methods implementation
@@ -1009,6 +1032,10 @@ void Esp32UsbTransport::handle_device_gone(usb_device_handle_t dev_hdl) {
         // Clean up device resources
         if (device_.dev_hdl) {
             intr_active_ = false;
+            {
+                std::lock_guard<std::mutex> intr_lock(intr_mutex_);
+                intr_reports_.clear();
+            }
             usb_host_interface_release(device_.client_hdl, device_.dev_hdl, device_.interface_num);
             if (usb_host_device_close(device_.client_hdl, device_.dev_hdl) != ESP_OK &&
                 (abandoned_transfers_.load() > 0 || intr_transfer_ != nullptr)) {
