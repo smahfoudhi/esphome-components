@@ -483,14 +483,27 @@ void Esp32UsbTransport::interrupt_in_cb_(usb_transfer_t *transfer) {
     if (transfer->status == USB_TRANSFER_STATUS_COMPLETED) {
         if (transfer->actual_num_bytes > 0) {
             self->intr_report_count_++;
+            self->intr_window_count_++;
+#if ESPHOME_LOG_LEVEL >= ESPHOME_LOG_LEVEL_VERBOSE
             char hex[3 * 64 + 1] = {0};
             size_t len = std::min<size_t>(transfer->actual_num_bytes, 64);
             for (size_t i = 0; i < len; i++) {
                 snprintf(hex + i * 3, 4, "%02X ", transfer->data_buffer[i]);
             }
-            ESP_LOGD(ESP32_USB_TAG, "Interrupt IN report #%u (%u bytes): %s",
+            ESP_LOGV(ESP32_USB_TAG, "Interrupt IN report #%u (%u bytes): %s",
                      static_cast<unsigned>(self->intr_report_count_),
                      static_cast<unsigned>(transfer->actual_num_bytes), hex);
+#endif
+            const uint32_t now = xTaskGetTickCount();
+            if (self->intr_window_tick_ == 0) {
+                self->intr_window_tick_ = now;
+            } else if (now - self->intr_window_tick_ >= pdMS_TO_TICKS(60000)) {
+                ESP_LOGD(ESP32_USB_TAG, "Interrupt IN: %u reports in last 60s (total %u)",
+                         static_cast<unsigned>(self->intr_window_count_),
+                         static_cast<unsigned>(self->intr_report_count_));
+                self->intr_window_count_ = 0;
+                self->intr_window_tick_ = now;
+            }
         }
         if (self->intr_active_ && transfer->device_handle == self->device_.dev_hdl) {
             esp_err_t ret = usb_host_transfer_submit(transfer);

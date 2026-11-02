@@ -93,6 +93,8 @@ private:
     usb_transfer_t *intr_transfer_{nullptr};
     bool intr_active_{false};
     uint32_t intr_report_count_{0};
+    uint32_t intr_window_count_{0};
+    uint32_t intr_window_tick_{0};
     
     static void control_transfer_cb_(usb_transfer_t *transfer);
     esp_err_t run_control_transfer_(usb_transfer_t *transfer, uint32_t timeout_ms,
